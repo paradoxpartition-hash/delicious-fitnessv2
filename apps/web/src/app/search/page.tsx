@@ -5,7 +5,7 @@
  */
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { createBrowserClient } from '@/lib/supabase/browser';
@@ -22,7 +22,12 @@ interface SearchResult {
   profiles:      { username: string } | null;
 }
 
-export default function SearchPage() {
+const CATEGORY_EMOJI: Record<string, string> = {
+  meat: '🥩', fish: '🐟', fruit: '🍎', dairy: '🧀',
+  vegan: '🥗', pasta: '🍝', salad: '🥙', drinks: '🥤',
+};
+
+function SearchContent() {
   const searchParams  = useSearchParams();
   const router        = useRouter();
   const inputRef      = useRef<HTMLInputElement>(null);
@@ -41,7 +46,7 @@ export default function SearchPage() {
     return () => window.removeEventListener('df:langchange', h);
   }, []);
 
-  // Keyboard shortcut: "/" to focus search (PRESERVED)
+  // Keyboard shortcut: "/" to focus
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === '/' && document.activeElement !== inputRef.current) {
@@ -53,23 +58,18 @@ export default function SearchPage() {
     return () => document.removeEventListener('keydown', handler);
   }, []);
 
-  // Search using Supabase full-text search (PRESERVED)
   const search = useCallback(async (q: string) => {
     if (!q.trim()) { setResults([]); setSearched(false); return; }
     setLoading(true); setSearched(true);
-
     try {
-      // Use pg full-text search (PRESERVED from original)
       const { data } = await supabase
         .from('recipes')
         .select('id, title, description, category, cached_macros, diet_tags, image_url, profiles(username)')
         .eq('status', 'published')
         .textSearch('fts', q.trim().split(' ').join(' & '), { type: 'websearch' })
         .limit(20);
-
       setResults((data ?? []) as SearchResult[]);
     } catch (_) {
-      // Fallback: ILIKE search (PRESERVED fallback from original)
       try {
         const { data } = await supabase
           .from('recipes')
@@ -81,23 +81,17 @@ export default function SearchPage() {
       } catch (_) {}
     }
     setLoading(false);
-  }, []);
+  }, [supabase]);
 
-  // Auto-search from URL param
   useEffect(() => {
     const q = searchParams.get('q');
     if (q) { setQuery(q); search(q); }
-  }, [searchParams]);
+  }, [searchParams, search]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     router.push(`/search?q=${encodeURIComponent(query.trim())}`);
     search(query);
-  };
-
-  const CATEGORY_EMOJI: Record<string, string> = {
-    meat: '🥩', fish: '🐟', fruit: '🍎', dairy: '🧀',
-    vegan: '🥗', pasta: '🍝', salad: '🥙', drinks: '🥤',
   };
 
   return (
@@ -110,10 +104,7 @@ export default function SearchPage() {
           </h1>
           <form onSubmit={handleSubmit}>
             <div className="search-bar-lg">
-              <span style={{
-                paddingLeft: 20, color: 'var(--text-light)',
-                fontSize: '1.2rem', flexShrink: 0,
-              }}>🔍</span>
+              <span style={{ paddingLeft: 20, color: 'var(--text-light)', fontSize: '1.2rem', flexShrink: 0 }}>🔍</span>
               <input
                 ref={inputRef}
                 type="text"
@@ -129,7 +120,6 @@ export default function SearchPage() {
             </div>
           </form>
 
-          {/* Quick suggestions */}
           {!searched && (
             <div className="flex justify-center gap-8 flex-wrap" style={{ marginTop: 20 }}>
               {['chicken', 'vegan pasta', 'high protein', 'bulk meal', '500 kcal'].map(s => (
@@ -139,18 +129,7 @@ export default function SearchPage() {
                   style={{
                     padding: '6px 14px', borderRadius: 'var(--r-full)',
                     background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)',
-                    color: 'rgba(255,255,255,0.75)', fontSize: '0.82rem', fontWeight: 500,
-                    cursor: 'pointer', transition: 'all var(--duration) var(--ease)',
-                  }}
-                  onMouseEnter={e => {
-                    (e.currentTarget as HTMLElement).style.background = 'rgba(34,197,94,0.2)';
-                    (e.currentTarget as HTMLElement).style.borderColor = 'var(--primary)';
-                    (e.currentTarget as HTMLElement).style.color = 'var(--primary)';
-                  }}
-                  onMouseLeave={e => {
-                    (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.1)';
-                    (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.2)';
-                    (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.75)';
+                    color: 'rgba(255,255,255,0.75)', fontSize: '0.82rem', fontWeight: 500, cursor: 'pointer',
                   }}
                 >
                   {s}
@@ -163,18 +142,15 @@ export default function SearchPage() {
 
       <section className="section-sm">
         <div className="container">
-
-          {/* Results header */}
           {searched && !loading && (
             <div style={{ marginBottom: 20, fontSize: '0.9rem', color: 'var(--text-muted)' }}>
               {results.length > 0
-                ? <><strong style={{ color: 'var(--text)' }}>{results.length}</strong> results for "<strong style={{ color: 'var(--dark)' }}>{query}</strong>"</>
-                : <>No results for "<strong>{query}</strong>"</>
+                ? <><strong style={{ color: 'var(--text)' }}>{results.length}</strong> results for <strong style={{ color: 'var(--dark)' }}>{query}</strong></>
+                : <>No results for <strong>{query}</strong></>
               }
             </div>
           )}
 
-          {/* Loading skeletons */}
           {loading && (
             <div className="recipe-grid">
               {[...Array(8)].map((_, i) => (
@@ -182,7 +158,6 @@ export default function SearchPage() {
                   <div className="skeleton" style={{ height: 196 }} />
                   <div style={{ padding: 18 }}>
                     <div className="skeleton mb-8" style={{ height: 14, width: '75%' }} />
-                    <div className="skeleton mb-8" style={{ height: 11 }} />
                     <div className="skeleton" style={{ height: 11, width: '55%' }} />
                   </div>
                 </div>
@@ -190,12 +165,11 @@ export default function SearchPage() {
             </div>
           )}
 
-          {/* Results */}
           {!loading && searched && results.length === 0 && (
             <div className="empty-state">
               <div className="empty-icon">🔍</div>
               <h3 className="empty-title">No recipes found</h3>
-              <p className="empty-desc">Try different keywords, or browse all recipes</p>
+              <p className="empty-desc">Try different keywords or browse all recipes</p>
               <Link href="/recipes" className="btn btn-primary">Browse all recipes</Link>
             </div>
           )}
@@ -242,7 +216,6 @@ export default function SearchPage() {
             </div>
           )}
 
-          {/* Not yet searched state */}
           {!searched && !loading && (
             <div className="empty-state">
               <div className="empty-icon">🥗</div>
@@ -253,5 +226,17 @@ export default function SearchPage() {
         </div>
       </section>
     </>
+  );
+}
+
+export default function SearchPage() {
+  return (
+    <Suspense fallback={
+      <div style={{ display: 'grid', placeItems: 'center', minHeight: '60vh' }}>
+        <p style={{ color: 'var(--text-muted)' }}>Loading search…</p>
+      </div>
+    }>
+      <SearchContent />
+    </Suspense>
   );
 }
