@@ -5,13 +5,13 @@
  */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createBrowserClient } from '@/lib/supabase/browser';
 import { detectLanguage, getTranslations, type LangCode } from '@/lib/i18n';
 
-export default function SignUpPage() {
+function SignUpForm() {
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
@@ -34,12 +34,10 @@ export default function SignUpPage() {
 
   const t = getTranslations(lang);
 
-  // ── Sign up (PRESERVED logic) ─────────────────────────────────────────────
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
     setLoading(true); setError('');
-
     const { error: err } = await supabase.auth.signUp({
       email, password,
       options: {
@@ -47,13 +45,11 @@ export default function SignUpPage() {
         emailRedirectTo: `${window.location.origin}/auth/callback?next=${next}`,
       },
     });
-
     if (err) { setError(err.message); setLoading(false); return; }
     setSuccess(true);
     setLoading(false);
   };
 
-  // ── Google OAuth (PRESERVED) ──────────────────────────────────────────────
   const handleGoogle = async () => {
     setLoading(true); setError('');
     const { error: err } = await supabase.auth.signInWithOAuth({
@@ -72,9 +68,7 @@ export default function SignUpPage() {
           <p style={{ color: 'var(--text-muted)', marginBottom: 24, lineHeight: 1.7 }}>
             We sent a confirmation link to <strong>{email}</strong>. Click it to activate your account.
           </p>
-          <Link href="/auth/signin" className="btn btn-primary">
-            Back to sign in
-          </Link>
+          <Link href="/auth/signin" className="btn btn-primary">Back to sign in</Link>
         </div>
       </div>
     );
@@ -82,7 +76,6 @@ export default function SignUpPage() {
 
   return (
     <div className="auth-layout">
-      {/* Visual panel */}
       <div className="auth-panel-visual">
         <Link href="/" className="logo" style={{ color: 'white' }}>
           <div className="logo-mark">🥗</div>
@@ -90,34 +83,24 @@ export default function SignUpPage() {
             Delicious<span style={{ color: 'var(--primary)' }}>Fitness</span>
           </span>
         </Link>
-
-        <div>
-          {/* Feature bullets */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-            {[
-              { icon: '🎯', text: 'Macro-accurate recipes from a verified ingredient database' },
-              { icon: '🌍', text: 'Auto-translated to 5 languages — EN, NL, DE, FR, ES' },
-              { icon: '🤖', text: 'AI meal planner personalised to your fitness goal' },
-              { icon: '🤝', text: 'Community ratings, forks, comments and version history' },
-            ].map(f => (
-              <div key={f.icon} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-                <div style={{
-                  width: 36, height: 36, borderRadius: 'var(--r-sm)',
-                  background: 'rgba(34,197,94,0.15)',
-                  display: 'grid', placeItems: 'center', fontSize: '1.1rem', flexShrink: 0,
-                }}>{f.icon}</div>
-                <p style={{ color: 'rgba(255,255,255,0.65)', fontSize: '0.9rem', lineHeight: 1.55, paddingTop: 6 }}>{f.text}</p>
-              </div>
-            ))}
-          </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {[
+            { icon: '🎯', text: 'Macro-accurate recipes from a verified ingredient database' },
+            { icon: '🌍', text: 'Auto-translated to 5 languages — EN, NL, DE, FR, ES' },
+            { icon: '🤖', text: 'AI meal planner personalised to your fitness goal' },
+            { icon: '🤝', text: 'Community ratings, forks, comments and version history' },
+          ].map(f => (
+            <div key={f.icon} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+              <div style={{ width: 36, height: 36, borderRadius: 'var(--r-sm)', background: 'rgba(34,197,94,0.15)', display: 'grid', placeItems: 'center', fontSize: '1.1rem', flexShrink: 0 }}>{f.icon}</div>
+              <p style={{ color: 'rgba(255,255,255,0.65)', fontSize: '0.9rem', lineHeight: 1.55, paddingTop: 6 }}>{f.text}</p>
+            </div>
+          ))}
         </div>
-
         <div style={{ color: 'rgba(255,255,255,0.2)', fontSize: '0.75rem' }}>
-          Developed by <span style={{ color: 'rgba(255,255,255,0.45)' }}>SaaSolutions SL</span> · © 2026 Paradox FZCO
+          Developed by SaaSolutions SL · 2026 Paradox FZCO
         </div>
       </div>
 
-      {/* Form panel */}
       <div className="auth-panel-form">
         <div className="auth-inner">
           <h1 className="auth-title">{t.auth.signUpTitle}</h1>
@@ -137,57 +120,24 @@ export default function SignUpPage() {
 
           <form onSubmit={handleSignUp}>
             {error && (
-              <div style={{
-                background: '#fef2f2', border: '1px solid #fecaca',
-                borderRadius: 'var(--r)', padding: '10px 14px',
-                color: '#dc2626', fontSize: '0.85rem', marginBottom: 16,
-              }}>{error}</div>
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 'var(--r)', padding: '10px 14px', color: '#dc2626', fontSize: '0.85rem', marginBottom: 16 }}>{error}</div>
             )}
-
             <div className="field">
               <label className="field-label">Username</label>
-              <input
-                type="text" className="input"
-                placeholder="your_username"
-                value={username}
-                onChange={e => setUsername(e.target.value.toLowerCase().replace(/\s/g, '_'))}
-                required autoComplete="username"
-              />
+              <input type="text" className="input" placeholder="your_username" value={username} onChange={e => setUsername(e.target.value.toLowerCase().replace(/\s/g, '_'))} required autoComplete="username" />
             </div>
-
             <div className="field">
               <label className="field-label">{t.auth.emailLabel}</label>
-              <input
-                type="email" className="input"
-                placeholder="you@example.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                required autoComplete="email"
-              />
+              <input type="email" className="input" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email" />
             </div>
-
             <div className="field">
               <label className="field-label">{t.auth.passwordLabel}</label>
-              <input
-                type="password" className="input"
-                placeholder="Min. 6 characters"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                required autoComplete="new-password"
-                minLength={6}
-              />
+              <input type="password" className="input" placeholder="Min. 6 characters" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="new-password" minLength={6} />
               <span className="field-hint">At least 6 characters</span>
             </div>
-
-            <button
-              type="submit"
-              className={`btn btn-primary w-full${loading ? ' btn-loading' : ''}`}
-              style={{ height: 44 }}
-              disabled={loading}
-            >
+            <button type="submit" className={`btn btn-primary w-full${loading ? ' btn-loading' : ''}`} style={{ height: 44 }} disabled={loading}>
               {loading ? '' : t.auth.signUpBtn}
             </button>
-
             <p style={{ fontSize: '0.75rem', color: 'var(--text-light)', textAlign: 'center', marginTop: 14 }}>
               By signing up you agree to our{' '}
               <Link href="/terms" style={{ color: 'var(--primary)' }}>Terms</Link>
@@ -198,12 +148,18 @@ export default function SignUpPage() {
 
           <div className="auth-switch">
             {t.auth.hasAccount}{' '}
-            <Link href={`/auth/signin${next !== '/' ? `?next=${next}` : ''}`}>
-              {t.auth.signInLink}
-            </Link>
+            <Link href={`/auth/signin${next !== '/' ? `?next=${next}` : ''}`}>{t.auth.signInLink}</Link>
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh' }}>Loading…</div>}>
+      <SignUpForm />
+    </Suspense>
   );
 }

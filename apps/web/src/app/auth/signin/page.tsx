@@ -5,13 +5,13 @@
  */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createBrowserClient } from '@/lib/supabase/browser';
 import { detectLanguage, getTranslations, type LangCode } from '@/lib/i18n';
 
-export default function SignInPage() {
+function SignInForm() {
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading]   = useState(false);
@@ -32,7 +32,6 @@ export default function SignInPage() {
 
   const t = getTranslations(lang);
 
-  // ── Sign in with email (PRESERVED logic) ──────────────────────────────────
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true); setError('');
@@ -41,7 +40,6 @@ export default function SignInPage() {
     router.push(next);
   };
 
-  // ── Google OAuth (PRESERVED logic) ────────────────────────────────────────
   const handleGoogle = async () => {
     setLoading(true); setError('');
     const { error: err } = await supabase.auth.signInWithOAuth({
@@ -61,10 +59,9 @@ export default function SignInPage() {
             Delicious<span style={{ color: 'var(--primary)' }}>Fitness</span>
           </span>
         </Link>
-
         <div>
           <blockquote style={{ color: 'rgba(255,255,255,0.7)', fontSize: '1.15rem', lineHeight: 1.7, fontStyle: 'italic', marginBottom: 20 }}>
-            "The most structured, macro-accurate recipe platform I've ever used. It changed how I eat."
+            The most structured, macro-accurate recipe platform I have ever used. It changed how I eat.
           </blockquote>
           <div className="flex gap-12 items-center">
             <div className="avatar avatar-md" style={{ background: 'rgba(255,255,255,0.15)' }}>MK</div>
@@ -74,11 +71,8 @@ export default function SignInPage() {
             </div>
           </div>
         </div>
-
         <div style={{ color: 'rgba(255,255,255,0.2)', fontSize: '0.75rem' }}>
-          Developed by {' '}
-          <span style={{ color: 'rgba(255,255,255,0.45)' }}>SaaSolutions SL</span>
-          {' '} · © 2026 Paradox FZCO
+          Developed by SaaSolutions SL · 2026 Paradox FZCO
         </div>
       </div>
 
@@ -88,7 +82,6 @@ export default function SignInPage() {
           <h1 className="auth-title">{t.auth.signInTitle}</h1>
           <p className="auth-sub">{t.auth.signInSub}</p>
 
-          {/* Google OAuth */}
           <button className="oauth-btn" onClick={handleGoogle} disabled={loading} style={{ width: '100%', marginBottom: 8 }}>
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
               <path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 01-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
@@ -101,63 +94,42 @@ export default function SignInPage() {
 
           <div className="auth-divider"><span>{t.auth.orContinueWith}</span></div>
 
-          {/* Email form */}
           <form onSubmit={handleSignIn}>
             {error && (
-              <div style={{
-                background: '#fef2f2', border: '1px solid #fecaca',
-                borderRadius: 'var(--r)', padding: '10px 14px',
-                color: '#dc2626', fontSize: '0.85rem', marginBottom: 16,
-              }}>
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 'var(--r)', padding: '10px 14px', color: '#dc2626', fontSize: '0.85rem', marginBottom: 16 }}>
                 {error}
               </div>
             )}
-
             <div className="field">
               <label className="field-label">{t.auth.emailLabel}</label>
-              <input
-                type="email" className="input"
-                placeholder="you@example.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                required autoComplete="email"
-              />
+              <input type="email" className="input" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email" />
             </div>
-
             <div className="field">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                 <label className="field-label" style={{ margin: 0 }}>{t.auth.passwordLabel}</label>
-                <Link href="/auth/forgot" style={{ fontSize: '0.78rem', color: 'var(--primary)' }}>
-                  {t.auth.forgotPassword}
-                </Link>
+                <Link href="/auth/forgot" style={{ fontSize: '0.78rem', color: 'var(--primary)' }}>{t.auth.forgotPassword}</Link>
               </div>
-              <input
-                type="password" className="input"
-                placeholder="••••••••"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                required autoComplete="current-password"
-              />
+              <input type="password" className="input" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" />
             </div>
-
-            <button
-              type="submit"
-              className={`btn btn-primary w-full${loading ? ' btn-loading' : ''}`}
-              style={{ height: 44 }}
-              disabled={loading}
-            >
+            <button type="submit" className={`btn btn-primary w-full${loading ? ' btn-loading' : ''}`} style={{ height: 44 }} disabled={loading}>
               {loading ? '' : t.auth.signInBtn}
             </button>
           </form>
 
           <div className="auth-switch">
             {t.auth.noAccount}{' '}
-            <Link href={`/auth/signup${next !== '/' ? `?next=${next}` : ''}`}>
-              {t.auth.signUpLink}
-            </Link>
+            <Link href={`/auth/signup${next !== '/' ? `?next=${next}` : ''}`}>{t.auth.signUpLink}</Link>
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh' }}>Loading…</div>}>
+      <SignInForm />
+    </Suspense>
   );
 }
