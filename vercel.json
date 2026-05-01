@@ -2,7 +2,6 @@
   "version": 2,
   "buildCommand": "pnpm turbo run build --filter=@df/web",
   "outputDirectory": "apps/web/.next",
-  "installCommand": "pnpm install",
-  "framework": "nextjs",
-  "ignoreCommand": "git diff HEAD^ HEAD --quiet ."
+  "installCommand": "npm i -g pnpm@9 && pnpm install",
+  "framework": "nextjs"
 }
