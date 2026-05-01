@@ -1,6 +1,3 @@
-# Supabase local development configuration
-# © 2026 Paradox FZCO — Developed by SaaSolutions SL
-
 [api]
 port = 54321
 schemas = ["public", "storage", "graphql_public"]
@@ -26,10 +23,7 @@ file_size_limit = "50MiB"
 
 [auth]
 site_url = "http://localhost:3000"
-additional_redirect_urls = [
-  "https://delicious-fitness-web.vercel.app",
-  "https://delicious-fitness-web.vercel.app/auth/callback"
-]
+additional_redirect_urls = ["https://delicious-fitness-web.vercel.app"]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
@@ -39,37 +33,8 @@ enable_signup = true
 enable_signup = true
 double_confirm_changes = true
 enable_confirmations = true
-secure_password_change = true
-
-[auth.sms]
-enable_signup = false
 
 [auth.external.google]
-enabled = true
-client_id = "env(GOOGLE_CLIENT_ID)"
-secret = "env(GOOGLE_CLIENT_SECRET)"
-redirect_uri = ""
-
-[functions]
-verify_jwt = false  # Set per-function below
-
-[functions.create-checkout-session]
-verify_jwt = true
-
-[functions.create-portal-session]
-verify_jwt = true
-
-[functions.generate-meal-plan]
-verify_jwt = true
-
-[functions.translate-recipe]
-verify_jwt = false  # Called by server-side triggers (service role)
-
-[functions.stripe-webhook]
-verify_jwt = false  # Stripe calls this directly, verified by signature
-
-[functions.track-affiliate-click]
-verify_jwt = false  # Public redirect endpoint
-
-[analytics]
 enabled = false
+client_id = ""
+secret = ""
