@@ -1,13 +1,7 @@
 {
   "name": "delicious-fitness",
   "version": "2.0.0",
-  "description": "The GitHub of Recipes",
-  "author": "SaaSolutions SL",
-  "license": "Proprietary",
   "private": true,
-  "scripts": {
-    "build": "next build",
-    "dev": "next dev",
-    "lint": "next lint"
-  }
+  "author": "SaaSolutions SL",
+  "license": "Proprietary"
 }
