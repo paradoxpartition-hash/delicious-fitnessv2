@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "buildCommand": "pnpm turbo run build --filter=@df/web",
-  "outputDirectory": "apps/web/.next",
-  "installCommand": "npm i -g pnpm@9 && pnpm install",
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "rootDirectory": "apps/web",
+  "installCommand": "npm install --legacy-peer-deps",
+  "buildCommand": "npm run build"
 }
