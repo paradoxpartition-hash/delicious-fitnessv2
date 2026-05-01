@@ -14,7 +14,7 @@ export default function AboutPage() {
       <section className="page-hero">
         <div className="container">
           <h1>About Delicious Fitness</h1>
-          <p>The story behind the platform — and the people who built it.</p>
+          <p>The story behind the platform and the people who built it.</p>
         </div>
       </section>
 
@@ -42,10 +42,10 @@ export default function AboutPage() {
           {/* Stats */}
           <div className="stats-grid" style={{ marginBottom: 56 }}>
             {[
-              { value: '2,400+', label: 'Published recipes' },
+              { value: '2,400+',  label: 'Published recipes' },
               { value: '18,500+', label: 'Active members' },
-              { value: '5', label: 'Languages' },
-              { value: '340+', label: 'Verified chefs' },
+              { value: '5',       label: 'Languages' },
+              { value: '340+',    label: 'Verified chefs' },
             ].map(({ value, label }) => (
               <div key={label} className="stat-card">
                 <div className="stat-number">{value}</div>
@@ -54,17 +54,24 @@ export default function AboutPage() {
             ))}
           </div>
 
-          {/* Tech */}
-          <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 'var(--r-xl)', padding: 36, marginBottom: 40 }}>
+          {/* Tech stack */}
+          <div style={{
+            background: 'white', border: '1px solid var(--border)',
+            borderRadius: 'var(--r-xl)', padding: 36, marginBottom: 40,
+          }}>
             <h3 style={{ marginBottom: 20 }}>Built with</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px,1fr))', gap: 14 }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(180px,1fr))',
+              gap: 14,
+            }}>
               {[
-                { icon: '⚡', name: 'Next.js 14', desc: 'App Router' },
-                { icon: '🗄️', name: 'Supabase', desc: 'Postgres + RLS + Auth' },
-                { icon: '💳', name: 'Stripe', desc: 'Payments' },
+                { icon: '⚡', name: 'Next.js 14',   desc: 'App Router' },
+                { icon: '🗄️', name: 'Supabase',     desc: 'Postgres + RLS + Auth' },
+                { icon: '💳', name: 'Stripe',        desc: 'Payments' },
                 { icon: '🤖', name: 'Groq / Gemini', desc: 'AI translation' },
-                { icon: '🌍', name: 'DeepL', desc: 'Professional translation' },
-                { icon: '📦', name: 'Turborepo', desc: 'Monorepo' },
+                { icon: '🌍', name: 'Free AI APIs',  desc: 'Groq, Gemini, OpenRouter' },
+                { icon: '📦', name: 'npm + Next.js', desc: 'Simple build pipeline' },
               ].map(({ icon, name, desc }) => (
                 <div key={name} style={{
                   display: 'flex', gap: 12, alignItems: 'flex-start',
@@ -82,7 +89,7 @@ export default function AboutPage() {
             </div>
           </div>
 
-          {/* IP & Ownership */}
+          {/* IP */}
           <div style={{
             background: 'var(--dark)', color: 'white',
             borderRadius: 'var(--r-xl)', padding: 36, marginBottom: 40,
@@ -107,7 +114,7 @@ export default function AboutPage() {
               </div>
             </div>
             <p style={{ fontSize: '0.83rem', color: 'rgba(255,255,255,0.4)', marginTop: 20, lineHeight: 1.7 }}>
-              © 2026 {SYSTEM_OWNER}. All intellectual property rights are owned exclusively by {SYSTEM_OWNER}.
+              2026 {SYSTEM_OWNER}. All intellectual property rights are owned exclusively by {SYSTEM_OWNER}.
               This platform was developed by {SYSTEM_DEVELOPER}. Unauthorized use is prohibited.
             </p>
           </div>
@@ -115,10 +122,16 @@ export default function AboutPage() {
           {/* CTA */}
           <div style={{ textAlign: 'center' }}>
             <h3 style={{ marginBottom: 12 }}>Ready to start?</h3>
-            <p style={{ color: 'var(--text-muted)', marginBottom: 24 }}>Join the community and start cooking smarter today.</p>
+            <p style={{ color: 'var(--text-muted)', marginBottom: 24 }}>
+              Join the community and start cooking smarter today.
+            </p>
             <div className="flex justify-center gap-12 flex-wrap">
-              <Link href="/auth/signup" className="btn btn-primary btn-lg">Create free account</Link>
-              <Link href="/recipes" className="btn btn-outline btn-lg">Browse recipes</Link>
+              <Link href="/auth/signup" className="btn btn-primary btn-lg">
+                Create free account
+              </Link>
+              <Link href="/recipes" className="btn btn-outline btn-lg">
+                Browse recipes
+              </Link>
             </div>
           </div>
         </div>
