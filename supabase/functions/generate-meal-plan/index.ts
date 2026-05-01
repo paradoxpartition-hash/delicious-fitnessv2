@@ -4,14 +4,14 @@
  * © 2026 Paradox FZCO. All rights reserved.
  *
  * Edge Function: generate-meal-plan
- * Generates a personalised 7-day meal plan using Groq Llama,
- * grounding recipe slots in actual published recipes from the database
- * where possible, falling back to custom labels for gaps.
+ * Generates a personalised 7-day meal plan.
+ * Uses Groq (free) as primary, Gemini Flash (free) as fallback.
  */
 import { ok, err, handleOptions } from '../_shared/cors.ts';
 import { getSupabaseUser, getSupabaseAdmin } from '../_shared/supabase.ts';
 
-const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY')!;
+const GROQ_API_KEY   = Deno.env.get('GROQ_API_KEY')!;
+const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 
@@ -34,53 +34,168 @@ interface DayPlan {
   snack:     MealSlot | null;
 }
 
-// ── Macro targets by goal ─────────────────────────────────────────────────────
 const MACRO_SPLITS: Record<Goal, { protein: number; carbs: number; fat: number }> = {
   bulk:     { protein: 0.30, carbs: 0.45, fat: 0.25 },
   cut:      { protein: 0.40, carbs: 0.30, fat: 0.30 },
   maintain: { protein: 0.30, carbs: 0.40, fat: 0.30 },
 };
 
+// ── Build the prompt ──────────────────────────────────────────────────────────
+function buildPrompt(
+  goal: Goal,
+  target_kcal: number,
+  recipeList: any[],
+  mealKcal: Record<string, number>
+): { system: string; user: string } {
+  const split = MACRO_SPLITS[goal];
+
+  const system = `You are a nutrition coach building structured weekly meal plans.
+Respond with ONLY valid JSON — no markdown, no explanation, no extra text whatsoever.`;
+
+  const user = `Create a 7-day meal plan:
+- Goal: ${goal} (${goal === 'bulk' ? 'calorie surplus' : goal === 'cut' ? 'calorie deficit, high protein' : 'maintenance'})
+- Daily target: ${target_kcal} kcal
+- Protein: ${Math.round(target_kcal * split.protein / 4)}g | Carbs: ${Math.round(target_kcal * split.carbs / 4)}g | Fat: ${Math.round(target_kcal * split.fat / 9)}g
+- Meal targets: breakfast ~${mealKcal.breakfast}, lunch ~${mealKcal.lunch}, dinner ~${mealKcal.dinner}, snack ~${mealKcal.snack} kcal
+
+Available recipes (prefer these when kcal is within ±150 of target):
+${JSON.stringify(recipeList.slice(0, 25))}
+
+Return a JSON array of exactly 7 objects:
+[{
+  "day": 1,
+  "day_name": "Monday",
+  "breakfast": { "recipe_id": "<uuid or null>", "recipe_title": "<string or null>", "kcal": <number>, "custom_label": "<string if no recipe>" },
+  "lunch":     { "recipe_id": "<uuid or null>", "recipe_title": "<string or null>", "kcal": <number>, "custom_label": "<string if no recipe>" },
+  "dinner":    { "recipe_id": "<uuid or null>", "recipe_title": "<string or null>", "kcal": <number>, "custom_label": "<string if no recipe>" },
+  "snack":     { "recipe_id": null, "recipe_title": null, "kcal": <number>, "custom_label": "<snack name>" }
+}]
+
+Rules: vary meals across days, total kcal within ±100 of ${target_kcal}, return ONLY the JSON array.`;
+
+  return { system, user };
+}
+
+// ── Groq call ─────────────────────────────────────────────────────────────────
+async function callGroq(system: string, user: string): Promise<string> {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model:       'llama-3.3-70b-versatile',
+      temperature: 0.4,
+      max_tokens:  3000,
+      messages:    [{ role: 'system', content: system }, { role: 'user', content: user }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Groq ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return data.choices[0].message.content as string;
+}
+
+// ── Gemini Flash call ─────────────────────────────────────────────────────────
+async function callGemini(system: string, user: string): Promise<string> {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `${system}\n\n${user}` }] }],
+        generationConfig: { temperature: 0.4, maxOutputTokens: 3000 },
+      }),
+    }
+  );
+  if (!res.ok) throw new Error(`Gemini ${res.status}`);
+  const data = await res.json();
+  return data.candidates[0].content.parts[0].text as string;
+}
+
+// ── Parse LLM response into DayPlan[] ────────────────────────────────────────
+function parseResponse(raw: string): DayPlan[] {
+  const cleaned = raw.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+
+  // Find the JSON array even if there's surrounding text
+  const match = cleaned.match(/\[[\s\S]*\]/);
+  if (!match) throw new Error('No JSON array found in response');
+
+  const plan = JSON.parse(match[0]);
+  if (!Array.isArray(plan) || plan.length !== 7) throw new Error('Invalid plan structure');
+  return plan as DayPlan[];
+}
+
+// ── Enrich slots with real DB recipe data ────────────────────────────────────
+function enrichSlot(slot: MealSlot, recipeMap: Map<string, any>): MealSlot {
+  if (!slot?.recipe_id) return slot;
+  const db = recipeMap.get(slot.recipe_id);
+  if (!db) return { ...slot, recipe_id: null, recipe_title: null }; // hallucinated ID
+  return { ...slot, recipe_title: db.title, kcal: db.cached_macros?.kcal ?? slot.kcal };
+}
+
+// ── Fallback plan when all LLMs fail ─────────────────────────────────────────
+function buildFallbackPlan(mealKcal: Record<string, number>): DayPlan[] {
+  const meals = {
+    bulk: {
+      breakfast: 'Oats with banana, protein powder and peanut butter',
+      lunch:     'Chicken rice bowl with vegetables',
+      dinner:    'Beef pasta with tomato sauce and parmesan',
+      snack:     'Greek yogurt with granola and honey',
+    },
+    cut: {
+      breakfast: 'Egg white omelette with spinach and feta',
+      lunch:     'Tuna salad with mixed greens and olive oil',
+      dinner:    'Baked salmon with broccoli and sweet potato',
+      snack:     'Cottage cheese with cucumber slices',
+    },
+    maintain: {
+      breakfast: 'Overnight oats with berries and chia seeds',
+      lunch:     'Quinoa bowl with roasted vegetables and chickpeas',
+      dinner:    'Grilled chicken with brown rice and asparagus',
+      snack:     'Apple with almond butter',
+    },
+  };
+
+  return DAYS.map((day_name, i) => ({
+    day: i + 1,
+    day_name,
+    breakfast: { recipe_id: null, recipe_title: null, kcal: mealKcal.breakfast, custom_label: meals.maintain.breakfast },
+    lunch:     { recipe_id: null, recipe_title: null, kcal: mealKcal.lunch,     custom_label: meals.maintain.lunch },
+    dinner:    { recipe_id: null, recipe_title: null, kcal: mealKcal.dinner,    custom_label: meals.maintain.dinner },
+    snack:     { recipe_id: null, recipe_title: null, kcal: mealKcal.snack,     custom_label: meals.maintain.snack },
+  }));
+}
+
+// ── Main handler ──────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleOptions();
 
   try {
-    // ── Auth ──────────────────────────────────────────────────────────────
+    // Auth
     const supabaseUser = getSupabaseUser(req.headers.get('Authorization'));
     const { data: { user }, error: authErr } = await supabaseUser.auth.getUser();
     if (authErr || !user) return err('Unauthorized', 401);
 
-    const { goal = 'maintain', target_kcal = 2000, lang = 'en' } = await req.json() as {
-      goal?: Goal;
-      target_kcal?: number;
-      lang?: Lang;
-    };
+    const {
+      goal        = 'maintain',
+      target_kcal = 2000,
+      lang        = 'en',
+    } = await req.json() as { goal?: Goal; target_kcal?: number; lang?: Lang };
 
     const supabaseAdmin = getSupabaseAdmin();
-    const split = MACRO_SPLITS[goal];
 
-    // ── Fetch candidate recipes from DB ───────────────────────────────────
-    // Pull up to 40 published recipes that match the goal or are goal-agnostic
+    // Fetch candidate recipes
     const { data: candidates } = await supabaseAdmin
       .from('recipes')
-      .select('id, title, cached_macros, category, goal, diet_tags')
+      .select('id, title, cached_macros, category, goal')
       .eq('status', 'published')
       .or(`goal.eq.${goal},goal.is.null`)
       .not('cached_macros', 'is', null)
       .limit(40);
 
-    // Build a compact recipe list for the LLM to reference
     const recipeList = (candidates ?? [])
-      .filter(r => r.cached_macros?.kcal)
-      .map(r => ({
-        id:       r.id,
-        title:    r.title,
-        kcal:     r.cached_macros.kcal,
-        category: r.category,
-        goal:     r.goal,
-      }));
+      .filter((r: any) => r.cached_macros?.kcal)
+      .map((r: any) => ({ id: r.id, title: r.title, kcal: r.cached_macros.kcal, category: r.category }));
 
-    // ── Build the LLM prompt ──────────────────────────────────────────────
     const mealKcal = {
       breakfast: Math.round(target_kcal * 0.25),
       lunch:     Math.round(target_kcal * 0.35),
@@ -88,102 +203,63 @@ Deno.serve(async (req) => {
       snack:     Math.round(target_kcal * 0.10),
     };
 
-    const systemPrompt = `You are a nutrition coach building a structured weekly meal plan.
-You MUST respond with ONLY valid JSON — no markdown, no explanation, no extra text.
-Use the provided recipe list when possible. If no recipe fits a slot, set recipe_id to null and provide a custom_label instead.`;
+    const { system, user: userPrompt } = buildPrompt(goal, target_kcal, recipeList, mealKcal);
 
-    const userPrompt = `Create a 7-day meal plan for:
-- Goal: ${goal} (${goal === 'bulk' ? 'calorie surplus, high carbs' : goal === 'cut' ? 'calorie deficit, high protein' : 'maintenance, balanced'})
-- Daily target: ${target_kcal} kcal
-- Protein: ${Math.round(target_kcal * split.protein / 4)}g | Carbs: ${Math.round(target_kcal * split.carbs / 4)}g | Fat: ${Math.round(target_kcal * split.fat / 9)}g
-
-Meal kcal targets: breakfast ~${mealKcal.breakfast}, lunch ~${mealKcal.lunch}, dinner ~${mealKcal.dinner}, snack ~${mealKcal.snack}
-
-Available recipes (use these when kcal is close to the target — within ±150kcal):
-${JSON.stringify(recipeList.slice(0, 30), null, 2)}
-
-Return a JSON array of 7 day objects. Each day:
-{
-  "day": <1-7>,
-  "day_name": "<Monday..Sunday>",
-  "breakfast": { "recipe_id": "<uuid or null>", "recipe_title": "<string or null>", "kcal": <number>, "custom_label": "<string if no recipe>" },
-  "lunch":     { "recipe_id": "<uuid or null>", "recipe_title": "<string or null>", "kcal": <number>, "custom_label": "<string if no recipe>" },
-  "dinner":    { "recipe_id": "<uuid or null>", "recipe_title": "<string or null>", "kcal": <number>, "custom_label": "<string if no recipe>" },
-  "snack":     { "recipe_id": null, "recipe_title": null, "kcal": <number>, "custom_label": "<snack suggestion>" }
-}
-
-Rules:
-- Vary meals across days (no repeated dinner 3+ times in a row)
-- Prefer using recipe_id when available
-- Total daily kcal should be within ±100 of ${target_kcal}
-- Return ONLY the JSON array, nothing else`;
-
-    // ── Call Groq ─────────────────────────────────────────────────────────
-    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method:  'POST',
-      headers: {
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
-        'Content-Type':  'application/json',
-      },
-      body: JSON.stringify({
-        model:       'llama-3.3-70b-versatile',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user',   content: userPrompt },
-        ],
-        temperature: 0.4,
-        max_tokens:  3000,
-      }),
-    });
-
-    if (!groqRes.ok) {
-      const groqErr = await groqRes.text();
-      throw new Error(`Groq API error ${groqRes.status}: ${groqErr}`);
-    }
-
-    const groqData = await groqRes.json();
-    const rawContent = groqData.choices[0].message.content as string;
-
-    // ── Parse and validate ────────────────────────────────────────────────
+    // Try Groq → Gemini → fallback
     let plan: DayPlan[];
-    try {
-      // Strip any accidental markdown code fences
-      const cleaned = rawContent.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-      plan = JSON.parse(cleaned);
-      if (!Array.isArray(plan) || plan.length !== 7) {
-        throw new Error('Invalid plan structure');
+    let usedModel = 'fallback';
+
+    if (GROQ_API_KEY) {
+      try {
+        const raw = await callGroq(system, userPrompt);
+        plan = parseResponse(raw);
+        usedModel = 'groq';
+        console.log('[generate-meal-plan] ✓ Groq');
+      } catch (e: any) {
+        console.warn('[generate-meal-plan] Groq failed:', e.message);
+        if (GEMINI_API_KEY) {
+          try {
+            const raw = await callGemini(system, userPrompt);
+            plan = parseResponse(raw);
+            usedModel = 'gemini';
+            console.log('[generate-meal-plan] ✓ Gemini fallback');
+          } catch (e2: any) {
+            console.warn('[generate-meal-plan] Gemini failed:', e2.message);
+            plan = buildFallbackPlan(mealKcal);
+          }
+        } else {
+          plan = buildFallbackPlan(mealKcal);
+        }
       }
-    } catch (parseErr: any) {
-      console.error('[generate-meal-plan] Parse error:', parseErr, '\nRaw:', rawContent);
-      // Fallback: build a minimal valid plan
-      plan = DAYS.map((day_name, i) => ({
-        day: i + 1,
-        day_name,
-        breakfast: { recipe_id: null, recipe_title: null, kcal: mealKcal.breakfast, custom_label: 'Oats with banana and protein powder' },
-        lunch:     { recipe_id: null, recipe_title: null, kcal: mealKcal.lunch,     custom_label: 'Chicken rice bowl with vegetables' },
-        dinner:    { recipe_id: null, recipe_title: null, kcal: mealKcal.dinner,    custom_label: 'Salmon with sweet potato and broccoli' },
-        snack:     { recipe_id: null, recipe_title: null, kcal: mealKcal.snack,     custom_label: 'Greek yogurt with mixed nuts' },
-      }));
+    } else if (GEMINI_API_KEY) {
+      try {
+        const raw = await callGemini(system, userPrompt);
+        plan = parseResponse(raw);
+        usedModel = 'gemini';
+      } catch (e: any) {
+        console.warn('[generate-meal-plan] Gemini failed:', e.message);
+        plan = buildFallbackPlan(mealKcal);
+      }
+    } else {
+      console.warn('[generate-meal-plan] No AI key set — using fallback plan');
+      plan = buildFallbackPlan(mealKcal);
     }
 
-    // ── Enrich with DB data for any matched recipe_ids ────────────────────
-    const allRecipeIds = plan.flatMap(day =>
-      [day.breakfast, day.lunch, day.dinner, day.snack]
-        .map(slot => slot?.recipe_id)
+    // Enrich with real DB data
+    const allIds = plan.flatMap(d =>
+      [d.breakfast, d.lunch, d.dinner, d.snack]
+        .map(s => s?.recipe_id)
         .filter(Boolean) as string[]
     );
 
-    if (allRecipeIds.length > 0) {
-      const { data: matchedRecipes } = await supabaseAdmin
+    if (allIds.length > 0) {
+      const { data: matched } = await supabaseAdmin
         .from('recipes')
         .select('id, title, cached_macros')
-        .in('id', [...new Set(allRecipeIds)]);
+        .in('id', [...new Set(allIds)]);
 
-      const recipeMap = new Map(
-        (matchedRecipes ?? []).map(r => [r.id, r])
-      );
+      const recipeMap = new Map((matched ?? []).map((r: any) => [r.id, r]));
 
-      // Correct any hallucinated recipe data with real DB values
       plan = plan.map(day => ({
         ...day,
         breakfast: enrichSlot(day.breakfast, recipeMap),
@@ -193,27 +269,16 @@ Rules:
       }));
     }
 
-    return ok({ plan, goal, target_kcal, generated_at: new Date().toISOString() });
+    return ok({
+      plan,
+      goal,
+      target_kcal,
+      model:        usedModel,
+      generated_at: new Date().toISOString(),
+    });
 
   } catch (e: any) {
     console.error('[generate-meal-plan]', e);
     return err(e.message ?? 'Generation failed', 500);
   }
 });
-
-function enrichSlot(
-  slot: MealSlot,
-  recipeMap: Map<string, { id: string; title: string; cached_macros: any }>
-): MealSlot {
-  if (!slot?.recipe_id) return slot;
-  const dbRecipe = recipeMap.get(slot.recipe_id);
-  if (!dbRecipe) {
-    // LLM hallucinated a recipe_id — clear it
-    return { ...slot, recipe_id: null, recipe_title: null };
-  }
-  return {
-    ...slot,
-    recipe_title: dbRecipe.title,
-    kcal:         dbRecipe.cached_macros?.kcal ?? slot.kcal,
-  };
-}

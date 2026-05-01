@@ -1,7 +1,7 @@
 {
-  "name": "@delicious-fitness/web",
+  "name": "@df/web",
   "version": "2.0.0",
-  "description": "Delicious Fitness web app — The GitHub of Recipes",
+  "description": "Delicious Fitness web app",
   "author": "SaaSolutions SL",
   "license": "Proprietary",
   "private": true,
@@ -13,18 +13,19 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@supabase/ssr":         "^0.5.0",
-    "@supabase/supabase-js": "^2.44.0",
-    "next":                  "14.2.3",
-    "react":                 "^18.3.0",
-    "react-dom":             "^18.3.0"
+    "@supabase/ssr":          "^0.5.0",
+    "@supabase/supabase-js":  "^2.44.0",
+    "next":                   "14.2.3",
+    "react":                  "^18.3.0",
+    "react-dom":              "^18.3.0",
+    "@df/shared-types":       "workspace:*"
   },
   "devDependencies": {
-    "@types/node":    "^20",
-    "@types/react":   "^18",
-    "@types/react-dom": "^18",
-    "typescript":     "^5.4.0",
-    "eslint":         "^8",
-    "eslint-config-next": "14.2.3"
+    "@types/node":            "^20",
+    "@types/react":           "^18",
+    "@types/react-dom":       "^18",
+    "typescript":             "^5.4.0",
+    "eslint":                 "^8",
+    "eslint-config-next":     "14.2.3"
   }
 }

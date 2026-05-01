@@ -6,21 +6,15 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
-// PRESERVED: Protected routes that require authentication
-const PROTECTED = [
+const PROTECTED_ROUTES = [
   '/meal-plan',
   '/chef',
   '/profile',
   '/recipes/new',
 ];
 
-// PRESERVED: Admin-only routes
-const ADMIN_ONLY = ['/admin'];
-
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-
-  // Build supabase client with request cookies
   let response = NextResponse.next({ request: { headers: request.headers } });
 
   const supabase = createServerClient(
@@ -45,15 +39,15 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Protect auth-required routes
-  const isProtected = PROTECTED.some(p => pathname.startsWith(p));
+  // Redirect unauthenticated users away from protected routes
+  const isProtected = PROTECTED_ROUTES.some(r => pathname.startsWith(r));
   if (isProtected && !user) {
     return NextResponse.redirect(
       new URL(`/auth/signin?next=${encodeURIComponent(pathname)}`, request.url)
     );
   }
 
-  // Redirect logged-in users away from auth pages
+  // Redirect authenticated users away from auth pages
   if (user && (pathname.startsWith('/auth/signin') || pathname.startsWith('/auth/signup'))) {
     const next = request.nextUrl.searchParams.get('next') ?? '/';
     return NextResponse.redirect(new URL(next, request.url));

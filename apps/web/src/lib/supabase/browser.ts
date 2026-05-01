@@ -3,11 +3,10 @@
  * Intellectual Property owned by Paradox FZCO
  * © 2026 Paradox FZCO. All rights reserved.
  */
-import { createBrowserClient as _createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient as _create } from '@supabase/ssr';
 
-// Re-export with project env vars — PRESERVED from original implementation
 export function createBrowserClient() {
-  return _createBrowserClient(
+  return _create(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );

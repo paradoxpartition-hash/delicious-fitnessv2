@@ -6,7 +6,9 @@
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // PRESERVED: existing image domains
+  // Transpile the workspace package so Next.js can resolve it
+  transpilePackages: ['@df/shared-types'],
+
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: '*.supabase.co' },
@@ -16,16 +18,14 @@ const nextConfig = {
     ],
   },
 
-  // Preserve existing experimental flags
   experimental: {
-    serverComponentsExternalPackages: ['@node-rs/argon2'],
+    serverComponentsExternalPackages: [],
   },
 
-  // Build info
   env: {
-    NEXT_PUBLIC_BUILD_SIGNATURE: 'DF-PARADOX-SaaS-2026',
+    NEXT_PUBLIC_BUILD_SIGNATURE:  'DF-PARADOX-SaaS-2026',
     NEXT_PUBLIC_SYSTEM_DEVELOPER: 'SaaSolutions SL',
-    NEXT_PUBLIC_SYSTEM_OWNER: 'Paradox FZCO',
+    NEXT_PUBLIC_SYSTEM_OWNER:     'Paradox FZCO',
   },
 };
 
