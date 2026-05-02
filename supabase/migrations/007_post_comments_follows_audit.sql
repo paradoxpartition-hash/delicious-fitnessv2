@@ -8,7 +8,7 @@
 
 -- ─── POST COMMENTS (threaded) ────────────────────────────────────────────────
 CREATE TABLE public.post_comments (
-  id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   post_id     UUID        NOT NULL REFERENCES public.community_posts(id) ON DELETE CASCADE,
   user_id     UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   content     TEXT        NOT NULL CHECK (char_length(content) BETWEEN 1 AND 1000),
@@ -51,7 +51,7 @@ CREATE POLICY "post_comments_delete_admin"
 -- ─── AFFILIATE CLICK LOG ──────────────────────────────────────────────────────
 -- Detailed click tracking for affiliate link analytics
 CREATE TABLE public.affiliate_click_log (
-  id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   link_id     UUID        NOT NULL REFERENCES public.affiliate_links(id) ON DELETE CASCADE,
   referrer    TEXT,
   user_agent  TEXT,
@@ -85,7 +85,7 @@ CREATE POLICY "affiliate_click_log_insert_service"
 
 -- ─── ADMIN AUDIT LOG ──────────────────────────────────────────────────────────
 CREATE TABLE public.admin_audit_log (
-  id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   admin_id    UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   action      TEXT        NOT NULL,
   target_type TEXT,
@@ -109,7 +109,7 @@ CREATE POLICY "audit_log_insert_admin"
 
 -- ─── FOLLOWS ──────────────────────────────────────────────────────────────────
 CREATE TABLE public.follows (
-  id           UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   follower_id  UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   following_id UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),

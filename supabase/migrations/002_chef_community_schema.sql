@@ -8,7 +8,7 @@
 
 -- ─── CHEF PROFILES ────────────────────────────────────────────────────────────
 CREATE TABLE public.chef_profiles (
-  id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID        NOT NULL UNIQUE REFERENCES public.profiles(id) ON DELETE CASCADE,
   stripe_customer_id TEXT     UNIQUE,
   bio             TEXT,
@@ -46,7 +46,7 @@ CREATE TYPE subscription_status AS ENUM ('trialing','active','past_due','cancele
 CREATE TYPE subscription_plan   AS ENUM ('monthly','annual');
 
 CREATE TABLE public.subscriptions (
-  id                      UUID                PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                      UUID                PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id                 UUID                NOT NULL UNIQUE REFERENCES public.profiles(id) ON DELETE CASCADE,
   stripe_subscription_id  TEXT                NOT NULL UNIQUE,
   stripe_customer_id      TEXT                NOT NULL,
@@ -70,7 +70,7 @@ CREATE TRIGGER subscriptions_updated_at
 
 -- ─── AFFILIATE LINKS ──────────────────────────────────────────────────────────
 CREATE TABLE public.affiliate_links (
-  id            UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   chef_id       UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   recipe_id     UUID        NOT NULL REFERENCES public.recipes(id) ON DELETE CASCADE,
   partner_name  TEXT        NOT NULL,
@@ -91,7 +91,7 @@ CREATE TRIGGER affiliate_links_updated_at
 
 -- ─── MEAL PLANS ───────────────────────────────────────────────────────────────
 CREATE TABLE public.meal_plans (
-  id            UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id       UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   plan_data     JSONB       NOT NULL DEFAULT '[]',
   -- Array of DayPlan objects (see meal-plan/page.tsx for structure)
@@ -110,7 +110,7 @@ CREATE TRIGGER meal_plans_updated_at
 
 -- ─── COMMUNITY POSTS ──────────────────────────────────────────────────────────
 CREATE TABLE public.community_posts (
-  id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   content     TEXT        NOT NULL CHECK (char_length(content) BETWEEN 1 AND 3000),
   image_url   TEXT,
@@ -131,7 +131,7 @@ CREATE TRIGGER community_posts_updated_at
 
 -- ─── POST LIKES ───────────────────────────────────────────────────────────────
 CREATE TABLE public.post_likes (
-  id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   post_id     UUID        NOT NULL REFERENCES public.community_posts(id) ON DELETE CASCADE,
   user_id     UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -164,7 +164,7 @@ CREATE TYPE workout_level AS ENUM ('beginner','intermediate','advanced');
 CREATE TYPE workout_type  AS ENUM ('strength','cardio','hiit','yoga','mobility');
 
 CREATE TABLE public.workouts (
-  id            UUID          PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   title         TEXT          NOT NULL,
   description   TEXT,
   level         workout_level NOT NULL DEFAULT 'beginner',
@@ -188,7 +188,7 @@ CREATE TRIGGER workouts_updated_at
 
 -- ─── CHALLENGES ───────────────────────────────────────────────────────────────
 CREATE TABLE public.challenges (
-  id                UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   title             TEXT        NOT NULL,
   description       TEXT        NOT NULL,
   icon              TEXT        NOT NULL DEFAULT '🎯',
@@ -206,7 +206,7 @@ CREATE TRIGGER challenges_updated_at
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 CREATE TABLE public.challenge_participants (
-  id           UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   challenge_id UUID        NOT NULL REFERENCES public.challenges(id) ON DELETE CASCADE,
   user_id      UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   enrolled     BOOLEAN     NOT NULL DEFAULT TRUE,
@@ -246,7 +246,7 @@ CREATE TRIGGER sync_participant_count
 CREATE TYPE blog_status AS ENUM ('draft','published','archived');
 
 CREATE TABLE public.blog_posts (
-  id            UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   author_id     UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   title         TEXT        NOT NULL,
   slug          TEXT        NOT NULL UNIQUE,

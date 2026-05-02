@@ -8,9 +8,9 @@
  */
 
 -- ─── EXTENSIONS ──────────────────────────────────────────────────────────────
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pg_trgm";
-CREATE EXTENSION IF NOT EXISTS "unaccent";
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS "pg_trgm" WITH SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS "unaccent" WITH SCHEMA extensions;
 
 -- ─── CUSTOM TYPES ─────────────────────────────────────────────────────────────
 CREATE TYPE recipe_status   AS ENUM ('draft', 'published', 'archived');
@@ -68,7 +68,7 @@ CREATE TRIGGER profiles_updated_at
 
 -- ─── RECIPES ──────────────────────────────────────────────────────────────────
 CREATE TABLE public.recipes (
-  id              UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
   author_id       UUID            NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   title           TEXT            NOT NULL,
   description     TEXT,
@@ -124,7 +124,7 @@ CREATE TRIGGER recipes_updated_at
 
 -- ─── RECIPE RATINGS ───────────────────────────────────────────────────────────
 CREATE TABLE public.recipe_ratings (
-  id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   recipe_id   UUID        NOT NULL REFERENCES public.recipes(id) ON DELETE CASCADE,
   user_id     UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   rating      SMALLINT    NOT NULL CHECK (rating BETWEEN 1 AND 5),
@@ -163,7 +163,7 @@ CREATE TRIGGER refresh_rating_on_change
 
 -- ─── RECIPE COMMENTS ─────────────────────────────────────────────────────────
 CREATE TABLE public.recipe_comments (
-  id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   recipe_id   UUID        NOT NULL REFERENCES public.recipes(id) ON DELETE CASCADE,
   user_id     UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   content     TEXT        NOT NULL CHECK (char_length(content) BETWEEN 1 AND 2000),
@@ -184,7 +184,7 @@ CREATE TRIGGER recipe_comments_updated_at
 
 -- ─── SAVED RECIPES ────────────────────────────────────────────────────────────
 CREATE TABLE public.saved_recipes (
-  id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   recipe_id   UUID        NOT NULL REFERENCES public.recipes(id) ON DELETE CASCADE,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -197,7 +197,7 @@ CREATE INDEX saved_recipes_recipe_idx ON public.saved_recipes(recipe_id);
 
 -- ─── RECIPE VIEWS (analytics) ────────────────────────────────────────────────
 CREATE TABLE public.recipe_views (
-  id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   recipe_id   UUID        NOT NULL REFERENCES public.recipes(id) ON DELETE CASCADE,
   author_id   UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   viewer_id   UUID        REFERENCES public.profiles(id) ON DELETE SET NULL,
