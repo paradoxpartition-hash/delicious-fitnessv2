@@ -3,42 +3,29 @@
  * Intellectual Property owned by Paradox FZCO
  * © 2026 Paradox FZCO. All rights reserved.
  *
- * Migration 006 — Scheduled jobs & automated chef stats refresh
+ * Migration 006 — Scheduled jobs, views, realtime
  */
 
--- ─── ENABLE PG_CRON EXTENSION ────────────────────────────────────────────────
--- Requires pg_cron to be enabled in Supabase dashboard (Database → Extensions)
-CREATE EXTENSION IF NOT EXISTS pg_cron;
+-- ─── ENABLE PG_CRON (if available) ───────────────────────────────────────────
+-- Note: pg_cron must be enabled in Supabase dashboard under Database → Extensions
+-- CREATE EXTENSION IF NOT EXISTS pg_cron;
 
--- ─── SCHEDULED: REFRESH ALL CHEF STATS (nightly at 02:00 UTC) ────────────────
-SELECT cron.schedule(
-  'refresh-all-chef-stats',
-  '0 2 * * *',  -- Every day at 02:00 UTC
-  $$
-    DO $$
-    DECLARE r RECORD;
-    BEGIN
-      FOR r IN SELECT DISTINCT user_id FROM public.chef_profiles LOOP
-        PERFORM public.refresh_chef_stats(r.user_id);
-      END LOOP;
-    END;
-    $$;
-  $$
-);
+-- ─── AUTO-PUBLISH BLOG POSTS ──────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.set_blog_published_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.status = 'published' AND (OLD.status IS NULL OR OLD.status != 'published') THEN
+    NEW.published_at = now();
+  END IF;
+  RETURN NEW;
+END;
+$$;
 
--- ─── SCHEDULED: CLEAN UP STALE VIEWS (weekly, Sunday 03:00 UTC) ──────────────
-SELECT cron.schedule(
-  'cleanup-old-views',
-  '0 3 * * 0',  -- Every Sunday at 03:00 UTC
-  $$
-    DELETE FROM public.recipe_views
-    WHERE viewed_at < now() - INTERVAL '180 days';
-  $$
-);
+CREATE TRIGGER blog_set_published_at
+  BEFORE UPDATE ON public.blog_posts
+  FOR EACH ROW EXECUTE FUNCTION public.set_blog_published_at();
 
--- ─── AUTO-REFRESH CHEF STATS ON RECIPE PUBLISH ───────────────────────────────
--- Trigger: whenever a recipe status changes to 'published' or away from it,
--- refresh the author's chef stats
+-- ─── AUTO-REFRESH CHEF STATS ON RECIPE STATUS CHANGE ─────────────────────────
 CREATE OR REPLACE FUNCTION public.on_recipe_status_change()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
@@ -53,23 +40,35 @@ CREATE TRIGGER recipe_status_changed
   AFTER UPDATE OF status ON public.recipes
   FOR EACH ROW EXECUTE FUNCTION public.on_recipe_status_change();
 
--- ─── AUTO-PUBLISH BLOG POSTS ──────────────────────────────────────────────────
--- Set published_at when status changes to 'published'
-CREATE OR REPLACE FUNCTION public.set_blog_published_at()
+-- ─── ADD fts_all COLUMN (trigger-based, not generated) ───────────────────────
+ALTER TABLE public.recipes
+  ADD COLUMN IF NOT EXISTS fts_all TSVECTOR;
+
+CREATE INDEX IF NOT EXISTS recipes_fts_all_idx ON public.recipes USING GIN(fts_all);
+
+-- Trigger to keep fts_all up to date with translations
+CREATE OR REPLACE FUNCTION public.recipes_fts_all_update()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
-  IF NEW.status = 'published' AND OLD.status != 'published' THEN
-    NEW.published_at = now();
-  END IF;
+  NEW.fts_all := to_tsvector('simple',
+    COALESCE(NEW.title, '') || ' ' ||
+    COALESCE(NEW.description, '') || ' ' ||
+    COALESCE(NEW.translations->>'nl', '') || ' ' ||
+    COALESCE(NEW.translations->>'de', '') || ' ' ||
+    COALESCE(NEW.translations->>'fr', '') || ' ' ||
+    COALESCE(NEW.translations->>'es', '') || ' ' ||
+    COALESCE(NEW.category::TEXT, '') || ' ' ||
+    COALESCE(NEW.goal::TEXT, '')
+  );
   RETURN NEW;
 END;
 $$;
 
-CREATE TRIGGER blog_set_published_at
-  BEFORE UPDATE ON public.blog_posts
-  FOR EACH ROW EXECUTE FUNCTION public.set_blog_published_at();
+CREATE TRIGGER recipes_fts_all_trigger
+  BEFORE INSERT OR UPDATE ON public.recipes
+  FOR EACH ROW EXECUTE FUNCTION public.recipes_fts_all_update();
 
--- ─── USEFUL VIEWS ────────────────────────────────────────────────────────────
+-- ─── USEFUL VIEWS ─────────────────────────────────────────────────────────────
 
 -- Public recipe feed (used by homepage community section)
 CREATE OR REPLACE VIEW public.v_recent_activity AS
@@ -100,8 +99,8 @@ SELECT
   r.fork_count,
   r.view_count,
   r.image_url,
-  p.username AS author_username,
-  p.avatar_url AS author_avatar
+  p.username    AS author_username,
+  p.avatar_url  AS author_avatar
 FROM public.recipes r
 JOIN public.profiles p ON p.id = r.author_id
 WHERE
@@ -131,25 +130,6 @@ GRANT SELECT ON public.v_recent_activity     TO anon, authenticated;
 GRANT SELECT ON public.v_top_recipes_monthly TO anon, authenticated;
 GRANT SELECT ON public.v_chef_leaderboard    TO anon, authenticated;
 
--- ─── FULL-TEXT SEARCH: MULTILINGUAL ───────────────────────────────────────────
--- Add a separate searchable column combining all translation content
-ALTER TABLE public.recipes
-  ADD COLUMN IF NOT EXISTS fts_all TSVECTOR GENERATED ALWAYS AS (
-    to_tsvector('simple',
-      COALESCE(title, '') || ' ' ||
-      COALESCE(description, '') || ' ' ||
-      COALESCE(translations->>'nl', '') || ' ' ||
-      COALESCE(translations->>'de', '') || ' ' ||
-      COALESCE(translations->>'fr', '') || ' ' ||
-      COALESCE(translations->>'es', '') || ' ' ||
-      COALESCE(category::TEXT, '') || ' ' ||
-      COALESCE(goal::TEXT, '')
-    )
-  ) STORED;
-
-CREATE INDEX IF NOT EXISTS recipes_fts_all_idx ON public.recipes USING GIN(fts_all);
-
 -- ─── REALTIME PUBLICATIONS ───────────────────────────────────────────────────
--- Enable Supabase Realtime for community feed
 ALTER PUBLICATION supabase_realtime ADD TABLE public.community_posts;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.recipe_comments;

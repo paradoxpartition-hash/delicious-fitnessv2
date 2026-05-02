@@ -4,13 +4,11 @@
  * © 2026 Paradox FZCO. All rights reserved.
  *
  * Migration 001 — Core schema
- * Run: supabase db push
  */
 
 -- ─── EXTENSIONS ──────────────────────────────────────────────────────────────
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
-CREATE EXTENSION IF NOT EXISTS "pg_trgm" WITH SCHEMA extensions;
-CREATE EXTENSION IF NOT EXISTS "unaccent" WITH SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+CREATE EXTENSION IF NOT EXISTS "unaccent";
 
 -- ─── CUSTOM TYPES ─────────────────────────────────────────────────────────────
 CREATE TYPE recipe_status   AS ENUM ('draft', 'published', 'archived');
@@ -20,7 +18,6 @@ CREATE TYPE diet_tag        AS ENUM ('halal','vegan','kosher','gluten-free');
 CREATE TYPE user_role       AS ENUM ('USER','CHEF','MODERATOR','ADMIN');
 
 -- ─── PROFILES ─────────────────────────────────────────────────────────────────
--- Extends Supabase auth.users with public profile data
 CREATE TABLE public.profiles (
   id            UUID        PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   username      TEXT        NOT NULL UNIQUE,
@@ -79,11 +76,8 @@ CREATE TABLE public.recipes (
   prep_time_min   SMALLINT        CHECK (prep_time_min >= 0),
   cook_time_min   SMALLINT        CHECK (cook_time_min >= 0),
   ingredients     JSONB           NOT NULL DEFAULT '[]',
-  -- Structure: [{ name, amount, unit, affiliate_url? }]
   steps           JSONB           NOT NULL DEFAULT '[]',
-  -- Structure: [{ order, instruction }]
   cached_macros   JSONB,
-  -- Structure: { kcal, protein_g, carbs_g, fat_g }
   image_url       TEXT,
   status          recipe_status   NOT NULL DEFAULT 'draft',
   forked_from_id  UUID            REFERENCES public.recipes(id) ON DELETE SET NULL,
@@ -93,29 +87,38 @@ CREATE TABLE public.recipes (
   rating_avg      NUMERIC(3,2)    CHECK (rating_avg BETWEEN 1 AND 5),
   rating_count    INT             NOT NULL DEFAULT 0 CHECK (rating_count >= 0),
   translations    JSONB           NOT NULL DEFAULT '{}',
-  -- Structure: { nl: { title, description, steps }, de: { ... }, ... }
   created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
-
-  -- Full-text search vector (EN title + description)
-  fts             TSVECTOR GENERATED ALWAYS AS (
-    to_tsvector('english',
-      COALESCE(title, '') || ' ' ||
-      COALESCE(description, '') || ' ' ||
-      COALESCE(category::TEXT, '') || ' ' ||
-      COALESCE(goal::TEXT, '')
-    )
-  ) STORED
+  -- Full-text search vector — populated by trigger below
+  fts             TSVECTOR
 );
 
-CREATE INDEX recipes_author_idx     ON public.recipes(author_id);
-CREATE INDEX recipes_status_idx     ON public.recipes(status);
-CREATE INDEX recipes_category_idx   ON public.recipes(category);
-CREATE INDEX recipes_goal_idx       ON public.recipes(goal);
-CREATE INDEX recipes_fts_idx        ON public.recipes USING GIN(fts);
-CREATE INDEX recipes_diet_tags_idx  ON public.recipes USING GIN(diet_tags);
-CREATE INDEX recipes_created_idx    ON public.recipes(created_at DESC);
-CREATE INDEX recipes_rating_idx     ON public.recipes(rating_avg DESC NULLS LAST);
+CREATE INDEX recipes_author_idx    ON public.recipes(author_id);
+CREATE INDEX recipes_status_idx    ON public.recipes(status);
+CREATE INDEX recipes_category_idx  ON public.recipes(category);
+CREATE INDEX recipes_goal_idx      ON public.recipes(goal);
+CREATE INDEX recipes_fts_idx       ON public.recipes USING GIN(fts);
+CREATE INDEX recipes_diet_tags_idx ON public.recipes USING GIN(diet_tags);
+CREATE INDEX recipes_created_idx   ON public.recipes(created_at DESC);
+CREATE INDEX recipes_rating_idx    ON public.recipes(rating_avg DESC NULLS LAST);
+
+-- Trigger to keep fts column up to date
+CREATE OR REPLACE FUNCTION public.recipes_fts_update()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.fts := to_tsvector('english',
+    COALESCE(NEW.title, '') || ' ' ||
+    COALESCE(NEW.description, '') || ' ' ||
+    COALESCE(NEW.category::TEXT, '') || ' ' ||
+    COALESCE(NEW.goal::TEXT, '')
+  );
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER recipes_fts_trigger
+  BEFORE INSERT OR UPDATE ON public.recipes
+  FOR EACH ROW EXECUTE FUNCTION public.recipes_fts_update();
 
 CREATE TRIGGER recipes_updated_at
   BEFORE UPDATE ON public.recipes
@@ -129,7 +132,6 @@ CREATE TABLE public.recipe_ratings (
   rating      SMALLINT    NOT NULL CHECK (rating BETWEEN 1 AND 5),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-
   UNIQUE (recipe_id, user_id)
 );
 
@@ -140,17 +142,15 @@ CREATE TRIGGER recipe_ratings_updated_at
   BEFORE UPDATE ON public.recipe_ratings
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
--- Auto-recalculate rating_avg on insert/update/delete
+-- Auto-recalculate rating_avg
 CREATE OR REPLACE FUNCTION public.refresh_recipe_rating()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_recipe_id UUID;
+DECLARE v_recipe_id UUID;
 BEGIN
   v_recipe_id := COALESCE(NEW.recipe_id, OLD.recipe_id);
-  UPDATE public.recipes
-  SET
-    rating_avg   = (SELECT AVG(rating)   FROM public.recipe_ratings WHERE recipe_id = v_recipe_id),
-    rating_count = (SELECT COUNT(*)      FROM public.recipe_ratings WHERE recipe_id = v_recipe_id)
+  UPDATE public.recipes SET
+    rating_avg   = (SELECT AVG(rating)::NUMERIC(3,2) FROM public.recipe_ratings WHERE recipe_id = v_recipe_id),
+    rating_count = (SELECT COUNT(*)                  FROM public.recipe_ratings WHERE recipe_id = v_recipe_id)
   WHERE id = v_recipe_id;
   RETURN NULL;
 END;
@@ -174,7 +174,6 @@ CREATE TABLE public.recipe_comments (
 
 CREATE INDEX recipe_comments_recipe_idx  ON public.recipe_comments(recipe_id);
 CREATE INDEX recipe_comments_user_idx    ON public.recipe_comments(user_id);
-CREATE INDEX recipe_comments_parent_idx  ON public.recipe_comments(parent_id);
 CREATE INDEX recipe_comments_created_idx ON public.recipe_comments(created_at DESC);
 
 CREATE TRIGGER recipe_comments_updated_at
@@ -187,14 +186,13 @@ CREATE TABLE public.saved_recipes (
   user_id     UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   recipe_id   UUID        NOT NULL REFERENCES public.recipes(id) ON DELETE CASCADE,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-
   UNIQUE (user_id, recipe_id)
 );
 
 CREATE INDEX saved_recipes_user_idx   ON public.saved_recipes(user_id);
 CREATE INDEX saved_recipes_recipe_idx ON public.saved_recipes(recipe_id);
 
--- ─── RECIPE VIEWS (analytics) ────────────────────────────────────────────────
+-- ─── RECIPE VIEWS ─────────────────────────────────────────────────────────────
 CREATE TABLE public.recipe_views (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   recipe_id   UUID        NOT NULL REFERENCES public.recipes(id) ON DELETE CASCADE,
@@ -203,11 +201,11 @@ CREATE TABLE public.recipe_views (
   viewed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX recipe_views_recipe_idx  ON public.recipe_views(recipe_id);
-CREATE INDEX recipe_views_author_idx  ON public.recipe_views(author_id);
-CREATE INDEX recipe_views_date_idx    ON public.recipe_views(viewed_at DESC);
+CREATE INDEX recipe_views_recipe_idx ON public.recipe_views(recipe_id);
+CREATE INDEX recipe_views_author_idx ON public.recipe_views(author_id);
+CREATE INDEX recipe_views_date_idx   ON public.recipe_views(viewed_at DESC);
 
--- Auto-increment view_count on recipe
+-- Auto-increment view_count
 CREATE OR REPLACE FUNCTION public.increment_view_count()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
