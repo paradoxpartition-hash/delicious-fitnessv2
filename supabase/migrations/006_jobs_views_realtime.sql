@@ -143,7 +143,7 @@ ALTER TABLE public.recipes
       COALESCE(translations->>'fr', '') || ' ' ||
       COALESCE(translations->>'es', '') || ' ' ||
       COALESCE(category::TEXT, '') || ' ' ||
-      COALESCE(array_to_string(diet_tags::TEXT[], ' '), '')
+      COALESCE(goal::TEXT, '')
     )
   ) STORED;
 

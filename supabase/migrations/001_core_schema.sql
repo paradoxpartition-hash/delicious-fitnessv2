@@ -103,8 +103,7 @@ CREATE TABLE public.recipes (
       COALESCE(title, '') || ' ' ||
       COALESCE(description, '') || ' ' ||
       COALESCE(category::TEXT, '') || ' ' ||
-      COALESCE(goal::TEXT, '') || ' ' ||
-      COALESCE(array_to_string(diet_tags::TEXT[], ' '), '')
+      COALESCE(goal::TEXT, '')
     )
   ) STORED
 );
