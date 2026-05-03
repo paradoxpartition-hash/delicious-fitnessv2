@@ -8,176 +8,213 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useAuth, ROLE_LABELS, ROLE_ICONS } from '@/hooks/use-auth';
 import { createBrowserClient } from '@/lib/supabase/browser';
 
-interface Profile {
+interface Recipe {
   id:           string;
-  username:     string;
-  avatar_url:   string | null;
-  bio:          string | null;
-  role:         string;
+  title:        string;
+  category:     string | null;
+  cached_macros: { kcal: number; protein_g: number } | null;
+  rating_avg:   number | null;
+  fork_count:   number;
+  view_count:   number;
   created_at:   string;
 }
 
 export default function ProfilePage() {
-  const [profile, setProfile]   = useState<Profile | null>(null);
-  const [recipes, setRecipes]   = useState<any[]>([]);
-  const [loading, setLoading]   = useState(true);
-  const [editMode, setEditMode] = useState(false);
-  const [bio, setBio]           = useState('');
-  const [saving, setSaving]     = useState(false);
-  const supabase = createBrowserClient();
   const router   = useRouter();
+  const supabase = createBrowserClient();
+  const { user, profile, isLoggedIn, loading } = useAuth();
+
+  const [recipes,   setRecipes]   = useState<Recipe[]>([]);
+  const [fetching,  setFetching]  = useState(true);
+  const [savedCount, setSavedCount] = useState(0);
+
+  // Auth guard
+  useEffect(() => {
+    if (!loading && !isLoggedIn) router.push('/auth/signin?next=/profile');
+  }, [loading, isLoggedIn]);
 
   useEffect(() => {
-    supabase.auth.getUser().then(async ({ data }) => {
-      if (!data.user) { router.push('/auth/signin?next=/profile'); return; }
-
-      const [{ data: prof }, { data: recs }] = await Promise.all([
-        supabase.from('profiles').select('id, username, avatar_url, bio, role, created_at').eq('id', data.user.id).single(),
-        supabase.from('recipes').select('id, title, category, cached_macros, rating_avg, fork_count, created_at').eq('author_id', data.user.id).eq('status', 'published').order('created_at', { ascending: false }).limit(12),
-      ]);
-
-      if (prof) { setProfile(prof as Profile); setBio(prof.bio ?? ''); }
-      setRecipes(recs ?? []);
-      setLoading(false);
+    if (!user?.id) return;
+    Promise.all([
+      supabase
+        .from('recipes')
+        .select('id, title, category, cached_macros, rating_avg, fork_count, view_count, created_at')
+        .eq('author_id', user.id)
+        .eq('status', 'published')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('saved_recipes')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id),
+    ]).then(([{ data: recs }, { count }]) => {
+      setRecipes((recs ?? []) as Recipe[]);
+      setSavedCount(count ?? 0);
+      setFetching(false);
     });
-  }, []);
+  }, [user?.id]);
 
-  // Update bio (PRESERVED)
-  const saveBio = async () => {
-    if (!profile) return;
-    setSaving(true);
-    await supabase.from('profiles').update({ bio }).eq('id', profile.id);
-    setProfile(prev => prev ? { ...prev, bio } : prev);
-    setEditMode(false);
-    setSaving(false);
-  };
-
-  if (loading) {
+  if (loading || !profile) {
     return (
-      <section className="section">
-        <div className="container" style={{ maxWidth: 800, marginInline: 'auto' }}>
-          <div className="flex gap-20 items-center mb-32">
-            <div className="skeleton" style={{ width: 80, height: 80, borderRadius: '50%' }} />
-            <div style={{ flex: 1 }}>
-              <div className="skeleton mb-8" style={{ height: 20, width: '40%' }} />
-              <div className="skeleton" style={{ height: 14, width: '60%' }} />
-            </div>
-          </div>
-        </div>
-      </section>
+      <div style={{ display: 'grid', placeItems: 'center', minHeight: '60vh' }}>
+        <div className="skeleton" style={{ width: 160, height: 20 }} />
+      </div>
     );
   }
 
-  if (!profile) return null;
+  const role    = profile.role ?? 'USER';
+  const totalForks = recipes.reduce((s, r) => s + (r.fork_count ?? 0), 0);
+  const avgRating  = recipes.filter(r => r.rating_avg).length
+    ? (recipes.reduce((s, r) => s + (r.rating_avg ?? 0), 0) / recipes.filter(r => r.rating_avg).length).toFixed(1)
+    : null;
+
+  const CATEGORY_EMOJI: Record<string, string> = {
+    meat: '🥩', fish: '🐟', fruit: '🍎', dairy: '🧀',
+    vegan: '🥗', pasta: '🍝', salad: '🥙', drinks: '🥤',
+  };
 
   return (
-    <section className="section-sm">
-      <div className="container" style={{ maxWidth: 860, marginInline: 'auto' }}>
-
-        {/* Profile header */}
-        <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 'var(--r-xl)', padding: 32, marginBottom: 24 }}>
-          <div className="flex gap-20 items-start flex-wrap">
-            <div className="avatar avatar-xl" style={{ flexShrink: 0 }}>
-              {profile.avatar_url
-                ? <img src={profile.avatar_url} alt="" />
-                : profile.username[0].toUpperCase()
-              }
-            </div>
-            <div style={{ flex: 1 }}>
-              <div className="flex-between flex-wrap gap-12 mb-8">
-                <div>
-                  <h1 style={{ fontSize: '1.6rem', marginBottom: 4 }}>{profile.username}</h1>
-                  <div className="flex gap-8 items-center">
-                    <span className={`badge ${profile.role === 'CHEF' ? 'badge-green' : 'badge-gray'}`}>
-                      {profile.role === 'CHEF' ? '👨‍🍳 Chef' : '👤 Member'}
-                    </span>
-                    <span style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>
-                      Member since {new Date(profile.created_at).toLocaleDateString('en', { month: 'long', year: 'numeric' })}
-                    </span>
-                  </div>
-                </div>
-                <div className="flex gap-8">
-                  <button className="btn btn-outline btn-sm" onClick={() => setEditMode(e => !e)}>
-                    ✏️ Edit profile
-                  </button>
-                  <Link href="/profile/saved" className="btn btn-ghost btn-sm">♥ Saved</Link>
-                </div>
+    <>
+      <section className="page-hero" style={{ paddingBlock: 56 }}>
+        <div className="container">
+          <div className="flex gap-24 items-center flex-wrap">
+            {/* Avatar */}
+            <div style={{ position: 'relative', flexShrink: 0 }}>
+              <div className="avatar" style={{ width: 80, height: 80, fontSize: '1.6rem' }}>
+                {profile.avatar_url
+                  ? <img src={profile.avatar_url} alt={profile.username} />
+                  : profile.username?.[0]?.toUpperCase()
+                }
               </div>
+            </div>
 
-              {editMode ? (
-                <div>
-                  <textarea
-                    className="input" rows={3}
-                    placeholder="Write a short bio…"
-                    value={bio}
-                    onChange={e => setBio(e.target.value)}
-                    style={{ marginBottom: 8 }}
-                  />
-                  <div className="flex gap-8">
-                    <button className={`btn btn-primary btn-sm${saving ? ' btn-loading' : ''}`} onClick={saveBio} disabled={saving}>
-                      {saving ? '' : 'Save'}
-                    </button>
-                    <button className="btn btn-ghost btn-sm" onClick={() => setEditMode(false)}>Cancel</button>
-                  </div>
-                </div>
-              ) : (
-                profile.bio
-                  ? <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', lineHeight: 1.7 }}>{profile.bio}</p>
-                  : <p style={{ color: 'var(--text-light)', fontSize: '0.88rem', fontStyle: 'italic' }}>No bio yet — click Edit to add one</p>
+            {/* Info */}
+            <div style={{ flex: 1 }}>
+              <div className="flex gap-10 items-center flex-wrap mb-6">
+                <h1 style={{ color: 'white', fontSize: 'clamp(1.4rem, 3vw, 2rem)', margin: 0 }}>
+                  {profile.username}
+                </h1>
+                <span style={{
+                  padding: '3px 12px', borderRadius: 'var(--r-full)',
+                  background: 'rgba(34,197,94,0.2)', color: 'var(--primary)',
+                  fontSize: '0.76rem', fontWeight: 700,
+                }}>
+                  {ROLE_ICONS[role]} {ROLE_LABELS[role] ?? role}
+                </span>
+              </div>
+              {profile.bio && (
+                <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.92rem', marginBottom: 14, maxWidth: 480 }}>
+                  {profile.bio}
+                </p>
+              )}
+              {profile.fitness_goal && (
+                <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem' }}>
+                  Goal: {profile.fitness_goal} · {profile.daily_kcal_target ? `${profile.daily_kcal_target} kcal` : ''} · {profile.diet_type ?? 'standard'}
+                </p>
               )}
             </div>
-          </div>
 
-          {/* Stats row */}
-          <div className="flex gap-32 flex-wrap" style={{ borderTop: '1px solid var(--border-light)', paddingTop: 20, marginTop: 20 }}>
+            {/* Edit button */}
+            <Link href="/profile/settings" className="btn btn-outline btn-sm"
+              style={{ borderColor: 'rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.7)', flexShrink: 0 }}>
+              ✏️ Edit profile
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <section className="section-sm">
+        <div className="container">
+
+          {/* Stats */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px,1fr))', gap: 12, marginBottom: 32 }}>
             {[
-              { label: 'Recipes', value: recipes.length },
-              { label: 'Total forks', value: recipes.reduce((s, r) => s + (r.fork_count ?? 0), 0) },
-              { label: 'Avg rating', value: recipes.filter(r => r.rating_avg).length ? (recipes.reduce((s, r) => s + (r.rating_avg ?? 0), 0) / recipes.filter(r => r.rating_avg).length).toFixed(1) + ' ★' : '—' },
-            ].map(({ label, value }) => (
-              <div key={label} style={{ textAlign: 'center' }}>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', fontWeight: 800, color: 'var(--primary)', lineHeight: 1 }}>{value}</div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 3 }}>{label}</div>
+              { icon: '🍽️', label: 'Recipes',     value: recipes.length },
+              { icon: '♥',  label: 'Saved',        value: savedCount },
+              { icon: '🔀', label: 'Total forks',  value: totalForks },
+              { icon: '⭐', label: 'Avg rating',   value: avgRating ?? '—' },
+            ].map(({ icon, label, value }) => (
+              <div key={label} style={{
+                background: 'white', border: '1px solid var(--border)',
+                borderRadius: 'var(--r-lg)', padding: '18px 20px', textAlign: 'center',
+              }}>
+                <div style={{ fontSize: '1.3rem', marginBottom: 4 }}>{icon}</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 800, color: 'var(--primary)', lineHeight: 1 }}>
+                  {value}
+                </div>
+                <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 4 }}>{label}</div>
               </div>
             ))}
           </div>
-        </div>
 
-        {/* Recipes */}
-        {recipes.length > 0 && (
-          <>
-            <h2 style={{ fontSize: '1.2rem', marginBottom: 16 }}>Published recipes</h2>
+          {/* Quick links */}
+          <div className="flex gap-12 mb-28 flex-wrap">
+            <Link href="/saved-recipes" className="btn btn-outline btn-sm">♥ Saved recipes</Link>
+            <Link href="/dashboard"     className="btn btn-outline btn-sm">📊 Dashboard</Link>
+            <Link href="/profile/settings" className="btn btn-outline btn-sm">⚙️ Settings</Link>
+          </div>
+
+          {/* Published recipes */}
+          {fetching ? (
             <div className="recipe-grid">
-              {recipes.map(r => (
-                <Link key={r.id} href={`/recipes/${r.id}`} style={{ display: 'contents' }}>
-                  <div className="recipe-card">
-                    <div className="recipe-thumb">
-                      <div className="recipe-thumb-emoji">
-                        {r.category === 'meat' ? '🥩' : r.category === 'fish' ? '🐟' : r.category === 'vegan' ? '🥗' : r.category === 'pasta' ? '🍝' : '🍽️'}
-                      </div>
-                      {r.category && (
-                        <div className="recipe-thumb-badges">
-                          <span className={`tag tag-${r.category}`}>{r.category.toUpperCase()}</span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="recipe-body">
-                      <h3 className="recipe-title">{r.title}</h3>
-                      <div className="recipe-meta">
-                        {r.cached_macros?.kcal != null && <div className="recipe-meta-item">🔥 <strong>{r.cached_macros.kcal}</strong> kcal</div>}
-                        <div className="recipe-meta-item">🔀 {r.fork_count ?? 0}</div>
-                        {r.rating_avg && <div className="recipe-meta-item">⭐ {r.rating_avg.toFixed(1)}</div>}
-                      </div>
-                    </div>
+              {[...Array(4)].map((_, i) => (
+                <div key={i} style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', overflow: 'hidden' }}>
+                  <div className="skeleton" style={{ height: 196 }} />
+                  <div style={{ padding: 18 }}>
+                    <div className="skeleton mb-8" style={{ height: 14, width: '75%' }} />
+                    <div className="skeleton" style={{ height: 11, width: '50%' }} />
                   </div>
-                </Link>
+                </div>
               ))}
             </div>
-          </>
-        )}
-      </div>
-    </section>
+          ) : recipes.length > 0 ? (
+            <>
+              <h3 style={{ fontSize: '1rem', marginBottom: 16 }}>Published recipes ({recipes.length})</h3>
+              <div className="recipe-grid">
+                {recipes.map(r => (
+                  <Link key={r.id} href={`/recipes/${r.id}`} style={{ display: 'contents' }}>
+                    <div className="recipe-card">
+                      <div className="recipe-thumb">
+                        <div className="recipe-thumb-emoji">
+                          {CATEGORY_EMOJI[r.category ?? ''] ?? '🍽️'}
+                        </div>
+                        {r.category && (
+                          <div className="recipe-thumb-badges">
+                            <span className={`tag tag-${r.category}`}>{r.category.toUpperCase()}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="recipe-body">
+                        <h3 className="recipe-title">{r.title}</h3>
+                        <div className="recipe-meta">
+                          {r.cached_macros?.kcal != null && (
+                            <div className="recipe-meta-item">🔥 <strong>{r.cached_macros.kcal}</strong> kcal</div>
+                          )}
+                          {r.fork_count > 0 && (
+                            <div className="recipe-meta-item">🔀 {r.fork_count}</div>
+                          )}
+                          {r.rating_avg && (
+                            <div className="recipe-meta-item">⭐ {r.rating_avg.toFixed(1)}</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">🍽️</div>
+              <h3 className="empty-title">No published recipes yet</h3>
+              <p className="empty-desc">Create your first recipe to build your profile</p>
+              <Link href="/recipes/new" className="btn btn-primary">Create recipe</Link>
+            </div>
+          )}
+        </div>
+      </section>
+    </>
   );
 }
