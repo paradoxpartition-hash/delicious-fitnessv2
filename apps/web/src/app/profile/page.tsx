@@ -2,42 +2,55 @@
  * Developed by SaaSolutions SL
  * Intellectual Property owned by Paradox FZCO
  * © 2026 Paradox FZCO. All rights reserved.
+ *
+ * ROOT CAUSE FIXED:
+ * - fetching initialised to `true` and only set to `false` inside an effect
+ *   that returned early when user.id was not yet available (auth still loading).
+ *   This left the spinner permanently visible.
+ * Fix: fetching starts `false`. It only becomes `true` when we actually start
+ *   a fetch, and always resolves to `false` in a finally block.
+ * - createBrowserClient() was called at component top level, creating a new
+ *   Supabase instance on every render and interfering with useAuth's listener.
+ * Fix: Use the supabase instance returned by useAuth.
  */
 'use client';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useAuth, ROLE_LABELS, ROLE_ICONS } from '@/hooks/use-auth';
-import { createBrowserClient } from '@/lib/supabase/browser';
 
 interface Recipe {
-  id:           string;
-  title:        string;
-  category:     string | null;
+  id:            string;
+  title:         string;
+  category:      string | null;
   cached_macros: { kcal: number; protein_g: number } | null;
-  rating_avg:   number | null;
-  fork_count:   number;
-  view_count:   number;
-  created_at:   string;
+  rating_avg:    number | null;
+  fork_count:    number;
+  view_count:    number;
+  created_at:    string;
 }
 
-export default function ProfilePage() {
-  const router   = useRouter();
-  const supabase = createBrowserClient();
-  const { user, profile, isLoggedIn, loading } = useAuth();
+const CATEGORY_EMOJI: Record<string, string> = {
+  meat: '🥩', fish: '🐟', fruit: '🍎', dairy: '🧀',
+  vegan: '🥗', pasta: '🍝', salad: '🥙', drinks: '🥤',
+};
 
-  const [recipes,   setRecipes]   = useState<Recipe[]>([]);
-  const [fetching,  setFetching]  = useState(true);
+export default function ProfilePage() {
+  // Use supabase from useAuth — never create a separate client in the page
+  const { user, profile, loading, supabase } = useAuth();
+
+  // fetching starts false — only true while an actual request is in-flight
+  const [recipes,    setRecipes]    = useState<Recipe[]>([]);
+  const [fetching,   setFetching]   = useState(false);
   const [savedCount, setSavedCount] = useState(0);
 
-  // Auth guard
   useEffect(() => {
-    if (!loading && !isLoggedIn) router.push('/auth/signin?next=/profile');
-  }, [loading, isLoggedIn]);
+    // Guard: wait until auth is resolved AND user exists
+    if (loading || !user?.id) return;
 
-  useEffect(() => {
-    if (!user?.id) return;
+    let cancelled = false;
+    setFetching(true);
+
     Promise.all([
       supabase
         .from('recipes')
@@ -49,14 +62,22 @@ export default function ProfilePage() {
         .from('saved_recipes')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', user.id),
-    ]).then(([{ data: recs }, { count }]) => {
-      setRecipes((recs ?? []) as Recipe[]);
-      setSavedCount(count ?? 0);
-      setFetching(false);
-    });
-  }, [user?.id]);
+    ])
+      .then(([{ data: recs }, { count }]) => {
+        if (cancelled) return;
+        setRecipes((recs ?? []) as Recipe[]);
+        setSavedCount(count ?? 0);
+      })
+      .catch(() => {}) // never leave fetching=true on error
+      .finally(() => {
+        if (!cancelled) setFetching(false);
+      });
 
-  if (loading || !profile) {
+    return () => { cancelled = true; };
+  }, [loading, user?.id]); // only re-run when auth resolves or user changes
+
+  // Show skeleton while auth is still resolving
+  if (loading) {
     return (
       <div style={{ display: 'grid', placeItems: 'center', minHeight: '60vh' }}>
         <div className="skeleton" style={{ width: 160, height: 20 }} />
@@ -64,36 +85,35 @@ export default function ProfilePage() {
     );
   }
 
-  const role    = profile.role ?? 'USER';
-  const totalForks = recipes.reduce((s, r) => s + (r.fork_count ?? 0), 0);
-  const avgRating  = recipes.filter(r => r.rating_avg).length
-    ? (recipes.reduce((s, r) => s + (r.rating_avg ?? 0), 0) / recipes.filter(r => r.rating_avg).length).toFixed(1)
-    : null;
+  // Middleware handles the redirect for unauthenticated users,
+  // but as a client-side safety net:
+  if (!user || !profile) return null;
 
-  const CATEGORY_EMOJI: Record<string, string> = {
-    meat: '🥩', fish: '🐟', fruit: '🍎', dairy: '🧀',
-    vegan: '🥗', pasta: '🍝', salad: '🥙', drinks: '🥤',
-  };
+  const role       = profile.role ?? 'USER';
+  const totalForks = recipes.reduce((s, r) => s + (r.fork_count ?? 0), 0);
+  const ratedCount = recipes.filter(r => r.rating_avg != null).length;
+  const avgRating  = ratedCount
+    ? (recipes.reduce((s, r) => s + (r.rating_avg ?? 0), 0) / ratedCount).toFixed(1)
+    : null;
 
   return (
     <>
       <section className="page-hero" style={{ paddingBlock: 56 }}>
         <div className="container">
           <div className="flex gap-24 items-center flex-wrap">
+
             {/* Avatar */}
-            <div style={{ position: 'relative', flexShrink: 0 }}>
-              <div className="avatar" style={{ width: 80, height: 80, fontSize: '1.6rem' }}>
-                {profile.avatar_url
-                  ? <img src={profile.avatar_url} alt={profile.username} />
-                  : profile.username?.[0]?.toUpperCase()
-                }
-              </div>
+            <div className="avatar" style={{ width: 80, height: 80, fontSize: '1.6rem', flexShrink: 0 }}>
+              {profile.avatar_url
+                ? <img src={profile.avatar_url} alt={profile.username} />
+                : profile.username?.[0]?.toUpperCase()
+              }
             </div>
 
             {/* Info */}
             <div style={{ flex: 1 }}>
               <div className="flex gap-10 items-center flex-wrap mb-6">
-                <h1 style={{ color: 'white', fontSize: 'clamp(1.4rem, 3vw, 2rem)', margin: 0 }}>
+                <h1 style={{ color: 'white', fontSize: 'clamp(1.4rem,3vw,2rem)', margin: 0 }}>
                   {profile.username}
                 </h1>
                 <span style={{
@@ -111,12 +131,13 @@ export default function ProfilePage() {
               )}
               {profile.fitness_goal && (
                 <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem' }}>
-                  Goal: {profile.fitness_goal} · {profile.daily_kcal_target ? `${profile.daily_kcal_target} kcal` : ''} · {profile.diet_type ?? 'standard'}
+                  Goal: {profile.fitness_goal}
+                  {profile.daily_kcal_target ? ` · ${profile.daily_kcal_target} kcal` : ''}
+                  {profile.diet_type ? ` · ${profile.diet_type}` : ''}
                 </p>
               )}
             </div>
 
-            {/* Edit button */}
             <Link href="/profile/settings" className="btn btn-outline btn-sm"
               style={{ borderColor: 'rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.7)', flexShrink: 0 }}>
               ✏️ Edit profile
@@ -131,10 +152,10 @@ export default function ProfilePage() {
           {/* Stats */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px,1fr))', gap: 12, marginBottom: 32 }}>
             {[
-              { icon: '🍽️', label: 'Recipes',     value: recipes.length },
-              { icon: '♥',  label: 'Saved',        value: savedCount },
-              { icon: '🔀', label: 'Total forks',  value: totalForks },
-              { icon: '⭐', label: 'Avg rating',   value: avgRating ?? '—' },
+              { icon: '🍽️', label: 'Recipes',    value: recipes.length },
+              { icon: '♥',  label: 'Saved',       value: savedCount },
+              { icon: '🔀', label: 'Total forks', value: totalForks },
+              { icon: '⭐', label: 'Avg rating',  value: avgRating ?? '—' },
             ].map(({ icon, label, value }) => (
               <div key={label} style={{
                 background: 'white', border: '1px solid var(--border)',
@@ -151,8 +172,8 @@ export default function ProfilePage() {
 
           {/* Quick links */}
           <div className="flex gap-12 mb-28 flex-wrap">
-            <Link href="/saved-recipes" className="btn btn-outline btn-sm">♥ Saved recipes</Link>
-            <Link href="/dashboard"     className="btn btn-outline btn-sm">📊 Dashboard</Link>
+            <Link href="/saved-recipes"    className="btn btn-outline btn-sm">♥ Saved recipes</Link>
+            <Link href="/dashboard"        className="btn btn-outline btn-sm">📊 Dashboard</Link>
             <Link href="/profile/settings" className="btn btn-outline btn-sm">⚙️ Settings</Link>
           </div>
 
@@ -177,9 +198,7 @@ export default function ProfilePage() {
                   <Link key={r.id} href={`/recipes/${r.id}`} style={{ display: 'contents' }}>
                     <div className="recipe-card">
                       <div className="recipe-thumb">
-                        <div className="recipe-thumb-emoji">
-                          {CATEGORY_EMOJI[r.category ?? ''] ?? '🍽️'}
-                        </div>
+                        <div className="recipe-thumb-emoji">{CATEGORY_EMOJI[r.category ?? ''] ?? '🍽️'}</div>
                         {r.category && (
                           <div className="recipe-thumb-badges">
                             <span className={`tag tag-${r.category}`}>{r.category.toUpperCase()}</span>
@@ -192,12 +211,8 @@ export default function ProfilePage() {
                           {r.cached_macros?.kcal != null && (
                             <div className="recipe-meta-item">🔥 <strong>{r.cached_macros.kcal}</strong> kcal</div>
                           )}
-                          {r.fork_count > 0 && (
-                            <div className="recipe-meta-item">🔀 {r.fork_count}</div>
-                          )}
-                          {r.rating_avg && (
-                            <div className="recipe-meta-item">⭐ {r.rating_avg.toFixed(1)}</div>
-                          )}
+                          {r.fork_count > 0 && <div className="recipe-meta-item">🔀 {r.fork_count}</div>}
+                          {r.rating_avg && <div className="recipe-meta-item">⭐ {r.rating_avg.toFixed(1)}</div>}
                         </div>
                       </div>
                     </div>

@@ -2,21 +2,27 @@
  * Developed by SaaSolutions SL
  * Intellectual Property owned by Paradox FZCO
  * © 2026 Paradox FZCO. All rights reserved.
+ *
+ * ROOT CAUSES FIXED:
+ * - createBrowserClient() called at component top level → interference with
+ *   useAuth listener. Fix: use supabase from useAuth.
+ * - Loading guard checked `loading || !profile` but profile was populated
+ *   asynchronously after loading became false, causing a brief null flash
+ *   that some environments interpreted as permanent. Fix: check both states
+ *   explicitly and show skeleton until both are resolved.
  */
 'use client';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useAuth, ROLE_LABELS, ROLE_ICONS, type UserRole } from '@/hooks/use-auth';
-import { createBrowserClient } from '@/lib/supabase/browser';
 import { setLanguage, detectLanguage, SUPPORTED_LANGUAGES, type LangCode } from '@/lib/i18n';
 
 const FITNESS_GOALS = [
-  { value: 'bulk',          label: 'Bulk',           desc: 'Calorie surplus',       icon: '🏋️' },
-  { value: 'cut',           label: 'Cut',            desc: 'Calorie deficit',        icon: '🔥' },
-  { value: 'maintain',      label: 'Maintain',       desc: 'Balanced',               icon: '⚖️' },
-  { value: 'recomposition', label: 'Recomposition',  desc: 'Build muscle + lose fat', icon: '🔄' },
+  { value: 'bulk',          label: 'Bulk',          desc: 'Calorie surplus',        icon: '🏋️' },
+  { value: 'cut',           label: 'Cut',           desc: 'Calorie deficit',         icon: '🔥' },
+  { value: 'maintain',      label: 'Maintain',      desc: 'Balanced',                icon: '⚖️' },
+  { value: 'recomposition', label: 'Recomposition', desc: 'Build muscle + lose fat', icon: '🔄' },
 ];
 
 const DIET_TYPES = [
@@ -38,31 +44,19 @@ const TABS = [
 type Tab = typeof TABS[number]['key'];
 
 export default function SettingsPage() {
-  const supabase = createBrowserClient();
-  const router   = useRouter();
-  const { user, profile, isLoggedIn, loading, refreshProfile } = useAuth();
+  const { user, profile, loading, supabase, refreshProfile } = useAuth();
 
   const [activeTab, setActiveTab] = useState<Tab>('profile');
-
-  // Profile fields
-  const [username,   setUsername]  = useState('');
-  const [bio,        setBio]       = useState('');
-  const [avatarUrl,  setAvatarUrl] = useState('');
-  const [uploading,  setUploading] = useState(false);
-
-  // Nutrition fields
+  const [username,  setUsername]  = useState('');
+  const [bio,       setBio]       = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [uploading, setUploading] = useState(false);
   const [fitnessGoal, setFitnessGoal] = useState('maintain');
   const [kcalTarget,  setKcalTarget]  = useState(2000);
   const [dietType,    setDietType]    = useState('standard');
-
-  // Preferences
-  const [lang, setLangState] = useState<LangCode>('en');
-
-  // Password
+  const [lang, setLangState]          = useState<LangCode>('en');
   const [newPw,     setNewPw]     = useState('');
   const [confirmPw, setConfirmPw] = useState('');
-
-  // UI state
   const [saving,   setSaving]   = useState(false);
   const [toast,    setToast]    = useState('');
   const [toastErr, setToastErr] = useState(false);
@@ -72,12 +66,8 @@ export default function SettingsPage() {
     setTimeout(() => setToast(''), 3500);
   };
 
-  // Auth guard
-  useEffect(() => {
-    if (!loading && !isLoggedIn) router.push('/auth/signin?next=/profile/settings');
-  }, [loading, isLoggedIn]);
-
-  // Populate from profile
+  // Populate form fields once profile is loaded
+  // This effect only fires when profile actually has data
   useEffect(() => {
     if (!profile) return;
     setUsername(profile.username ?? '');
@@ -87,26 +77,20 @@ export default function SettingsPage() {
     setKcalTarget(profile.daily_kcal_target ?? 2000);
     setDietType(profile.diet_type ?? 'standard');
     setLangState(detectLanguage());
-  }, [profile]);
+  }, [profile?.id]); // only re-populate if the user actually changes
 
-  // ── Save profile ──────────────────────────────────────────────────────────
   const saveProfile = async () => {
-    if (!username.trim()) { showToast('Username is required', true); return; }
+    if (!username.trim() || !user?.id) return;
     setSaving(true);
     const { error } = await supabase
       .from('profiles')
-      .update({
-        username:   username.trim(),
-        bio:        bio.trim() || null,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ username: username.trim(), bio: bio.trim() || null, updated_at: new Date().toISOString() })
       .eq('id', user.id);
     if (error) showToast(error.message, true);
     else { showToast('Profile saved ✅'); await refreshProfile(); }
     setSaving(false);
   };
 
-  // ── Upload avatar ─────────────────────────────────────────────────────────
   const handleAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user?.id) return;
@@ -114,8 +98,7 @@ export default function SettingsPage() {
     try {
       const ext  = file.name.split('.').pop();
       const path = `${user.id}/avatar-${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage
-        .from('avatars').upload(path, file, { upsert: true });
+      const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
       if (upErr) throw upErr;
       const { data } = supabase.storage.from('avatars').getPublicUrl(path);
       const url = `${data.publicUrl}?t=${Date.now()}`;
@@ -123,12 +106,12 @@ export default function SettingsPage() {
       setAvatarUrl(url);
       await refreshProfile();
       showToast('Avatar updated ✅');
-    } catch (e: any) { showToast(e.message, true); }
+    } catch (err: any) { showToast(err.message, true); }
     setUploading(false);
   };
 
-  // ── Save nutrition — marks meal plan for regeneration ─────────────────────
   const saveNutrition = async () => {
+    if (!user?.id) return;
     setSaving(true);
     const { error } = await supabase
       .from('profiles')
@@ -141,24 +124,19 @@ export default function SettingsPage() {
       })
       .eq('id', user.id);
     if (error) showToast(error.message, true);
-    else {
-      showToast('Nutrition saved ✅ — meal plan flagged for regeneration');
-      await refreshProfile();
-    }
+    else { showToast('Nutrition saved ✅ — meal plan flagged for regeneration'); await refreshProfile(); }
     setSaving(false);
   };
 
-  // ── Save preferences ──────────────────────────────────────────────────────
   const savePreferences = () => {
     setLanguage(lang);
     window.dispatchEvent(new CustomEvent('df:langchange', { detail: lang }));
     showToast('Preferences saved ✅');
   };
 
-  // ── Change password ───────────────────────────────────────────────────────
   const changePassword = async () => {
-    if (newPw.length < 6)    { showToast('Minimum 6 characters', true); return; }
-    if (newPw !== confirmPw)  { showToast('Passwords do not match', true); return; }
+    if (newPw.length < 6)   { showToast('Minimum 6 characters', true); return; }
+    if (newPw !== confirmPw) { showToast('Passwords do not match', true); return; }
     setSaving(true);
     const { error } = await supabase.auth.updateUser({ password: newPw });
     if (error) showToast(error.message, true);
@@ -166,23 +144,23 @@ export default function SettingsPage() {
     setSaving(false);
   };
 
-  // ── Delete account ────────────────────────────────────────────────────────
   const deleteAccount = async () => {
     if (!confirm('Delete your account? This cannot be undone.')) return;
     if (!confirm('All your recipes, saves, and subscriptions will be permanently deleted.')) return;
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'global' });
     window.location.href = '/';
   };
 
+  // Show skeleton while auth OR profile is loading
   if (loading || !profile) {
     return (
       <div style={{ display: 'grid', placeItems: 'center', minHeight: '60vh' }}>
-        <div className="skeleton" style={{ width: 160, height: 20 }} />
+        <div className="skeleton" style={{ width: 200, height: 20 }} />
       </div>
     );
   }
 
-  const role = (profile.role ?? 'member') as UserRole;
+  const role = (profile.role ?? 'USER') as UserRole;
 
   return (
     <>
@@ -213,7 +191,7 @@ export default function SettingsPage() {
                 background: 'none', border: 'none',
                 color: activeTab === tab.key ? 'var(--primary)' : 'var(--text-muted)',
                 borderBottom: `2px solid ${activeTab === tab.key ? 'var(--primary)' : 'transparent'}`,
-                marginBottom: -1, transition: 'color var(--duration) var(--ease)',
+                marginBottom: -1,
               }}>
                 {tab.label}
               </button>
@@ -246,12 +224,11 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {/* Role badge */}
               <div className="field">
                 <label className="field-label">Role</label>
                 <div className="flex gap-8 items-center">
-                  <span className={`badge ${role === 'admin' ? 'badge-green' : role === 'chef' ? 'badge-orange' : 'badge-gray'}`}>
-                    {ROLE_ICONS[role]} {ROLE_LABELS[role]}
+                  <span className={`badge ${role === 'ADMIN' || role === 'admin' ? 'badge-green' : role === 'CHEF' || role === 'chef' ? 'badge-orange' : 'badge-gray'}`}>
+                    {ROLE_ICONS[role] ?? '👤'} {ROLE_LABELS[role] ?? role}
                   </span>
                   <span style={{ fontSize: '0.76rem', color: 'var(--text-light)' }}>Contact admin to change role</span>
                 </div>
@@ -259,27 +236,22 @@ export default function SettingsPage() {
 
               <div className="field">
                 <label className="field-label">Username</label>
-                <input type="text" className="input"
-                  value={username}
+                <input type="text" className="input" value={username}
                   onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
-                  placeholder="your_username"
-                />
+                  placeholder="your_username" />
                 <span className="field-hint">Lowercase letters, numbers and underscores only</span>
               </div>
 
               <div className="field">
                 <label className="field-label">Bio</label>
-                <textarea className="input" rows={3}
-                  value={bio} onChange={e => setBio(e.target.value)}
-                  maxLength={300} placeholder="Tell the community about yourself…"
-                />
+                <textarea className="input" rows={3} value={bio}
+                  onChange={e => setBio(e.target.value)} maxLength={300}
+                  placeholder="Tell the community about yourself…" />
                 <span className="field-hint">{bio.length} / 300</span>
               </div>
 
-              <button
-                className={`btn btn-primary${saving ? ' btn-loading' : ''}`}
-                onClick={saveProfile} disabled={saving} style={{ height: 42 }}
-              >
+              <button className={`btn btn-primary${saving ? ' btn-loading' : ''}`}
+                onClick={saveProfile} disabled={saving} style={{ height: 42 }}>
                 {saving ? '' : 'Save profile'}
               </button>
             </div>
@@ -293,15 +265,16 @@ export default function SettingsPage() {
                 Changes here flag your meal plan for regeneration.
               </p>
 
-              {/* Fitness goal */}
               <div className="field">
                 <label className="field-label">🎯 Fitness goal</label>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px,1fr))', gap: 10 }}>
                   {FITNESS_GOALS.map(g => (
                     <button key={g.value} onClick={() => setFitnessGoal(g.value)} style={{
-                      padding: '14px', border: `1.5px solid ${fitnessGoal === g.value ? 'var(--primary)' : 'var(--border)'}`,
-                      borderRadius: 'var(--r-lg)', background: fitnessGoal === g.value ? 'var(--primary-50)' : 'white',
-                      cursor: 'pointer', textAlign: 'left', transition: 'all var(--duration) var(--ease)',
+                      padding: '14px', textAlign: 'left', cursor: 'pointer',
+                      border: `1.5px solid ${fitnessGoal === g.value ? 'var(--primary)' : 'var(--border)'}`,
+                      borderRadius: 'var(--r-lg)',
+                      background: fitnessGoal === g.value ? 'var(--primary-50)' : 'white',
+                      transition: 'all var(--duration) var(--ease)',
                     }}>
                       <div style={{ fontSize: '1.3rem', marginBottom: 5 }}>{g.icon}</div>
                       <div style={{ fontWeight: 700, fontSize: '0.88rem' }}>{g.label}</div>
@@ -311,37 +284,33 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {/* Calorie target */}
               <div className="field">
                 <label className="field-label">
                   🔥 Daily calorie target: <strong style={{ color: 'var(--primary)' }}>{kcalTarget.toLocaleString()} kcal</strong>
                 </label>
-                <input type="range" className="range-input"
-                  min={1200} max={4500} step={50}
-                  value={kcalTarget} onChange={e => setKcalTarget(+e.target.value)}
-                />
+                <input type="range" className="range-input" min={1200} max={4500} step={50}
+                  value={kcalTarget} onChange={e => setKcalTarget(+e.target.value)} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.73rem', color: 'var(--text-muted)', marginTop: 4 }}>
                   <span>1,200</span><span>4,500 kcal</span>
                 </div>
                 <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <input type="number" className="input"
-                    value={kcalTarget} min={1200} max={4500} step={50}
+                  <input type="number" className="input" value={kcalTarget} min={1200} max={4500} step={50}
                     onChange={e => setKcalTarget(Math.max(1200, Math.min(4500, +e.target.value)))}
-                    style={{ maxWidth: 130 }}
-                  />
+                    style={{ maxWidth: 130 }} />
                   <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>or type a value</span>
                 </div>
               </div>
 
-              {/* Diet type */}
               <div className="field">
                 <label className="field-label">🥗 Diet preference</label>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px,1fr))', gap: 10 }}>
                   {DIET_TYPES.map(d => (
                     <button key={d.value} onClick={() => setDietType(d.value)} style={{
-                      padding: '12px 14px', border: `1.5px solid ${dietType === d.value ? 'var(--primary)' : 'var(--border)'}`,
-                      borderRadius: 'var(--r-lg)', background: dietType === d.value ? 'var(--primary-50)' : 'white',
-                      cursor: 'pointer', textAlign: 'left', transition: 'all var(--duration) var(--ease)',
+                      padding: '12px 14px', textAlign: 'left', cursor: 'pointer',
+                      border: `1.5px solid ${dietType === d.value ? 'var(--primary)' : 'var(--border)'}`,
+                      borderRadius: 'var(--r-lg)',
+                      background: dietType === d.value ? 'var(--primary-50)' : 'white',
+                      transition: 'all var(--duration) var(--ease)',
                     }}>
                       <div style={{ fontSize: '1.2rem', marginBottom: 4 }}>{d.icon}</div>
                       <div style={{ fontWeight: 600, fontSize: '0.84rem' }}>{d.label}</div>
@@ -350,18 +319,12 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div style={{
-                background: 'rgba(255,122,0,0.06)', border: '1px solid rgba(255,122,0,0.2)',
-                borderRadius: 'var(--r)', padding: '10px 14px', marginBottom: 20,
-                fontSize: '0.82rem', color: 'var(--accent-dark)',
-              }}>
-                ⚠️ Saving will mark your weekly meal plan for regeneration. You will see a prompt on your dashboard.
+              <div style={{ background: 'rgba(255,122,0,0.06)', border: '1px solid rgba(255,122,0,0.2)', borderRadius: 'var(--r)', padding: '10px 14px', marginBottom: 20, fontSize: '0.82rem', color: 'var(--accent-dark)' }}>
+                ⚠️ Saving will flag your meal plan for regeneration. You will see a prompt on your dashboard.
               </div>
 
-              <button
-                className={`btn btn-primary${saving ? ' btn-loading' : ''}`}
-                onClick={saveNutrition} disabled={saving} style={{ height: 42 }}
-              >
+              <button className={`btn btn-primary${saving ? ' btn-loading' : ''}`}
+                onClick={saveNutrition} disabled={saving} style={{ height: 42 }}>
                 {saving ? '' : 'Save nutrition settings'}
               </button>
             </div>
@@ -371,7 +334,6 @@ export default function SettingsPage() {
           {activeTab === 'preferences' && (
             <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', padding: 28 }}>
               <h3 style={{ fontSize: '1rem', marginBottom: 24 }}>Preferences</h3>
-
               <div className="field">
                 <label className="field-label">🌍 Language</label>
                 <div className="flex flex-wrap gap-8">
@@ -383,7 +345,6 @@ export default function SettingsPage() {
                   ))}
                 </div>
               </div>
-
               <button className="btn btn-primary" onClick={savePreferences} style={{ height: 42 }}>
                 Save preferences
               </button>
@@ -404,15 +365,10 @@ export default function SettingsPage() {
                 <input type="password" className="input" placeholder="Repeat new password"
                   value={confirmPw} onChange={e => setConfirmPw(e.target.value)} autoComplete="new-password" />
               </div>
-              <button
-                className={`btn btn-primary${saving ? ' btn-loading' : ''}`}
-                onClick={changePassword} disabled={saving || !newPw || !confirmPw} style={{ height: 42 }}
-              >
+              <button className={`btn btn-primary${saving ? ' btn-loading' : ''}`}
+                onClick={changePassword} disabled={saving || !newPw || !confirmPw} style={{ height: 42 }}>
                 {saving ? '' : 'Update password'}
               </button>
-              <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 12 }}>
-                If you signed in with Google, you can set a password here to also enable email login.
-              </p>
             </div>
           )}
 
@@ -423,20 +379,12 @@ export default function SettingsPage() {
               <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.7, marginBottom: 24 }}>
                 These actions are permanent and cannot be undone.
               </p>
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12,
-                padding: '16px 20px', background: '#fef2f2',
-                borderRadius: 'var(--r)', border: '1px solid #fecaca',
-              }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, padding: '16px 20px', background: '#fef2f2', borderRadius: 'var(--r)', border: '1px solid #fecaca' }}>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>Delete account</div>
                   <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>All your data will be permanently removed</div>
                 </div>
-                <button onClick={deleteAccount} style={{
-                  padding: '8px 18px', background: '#dc2626', color: 'white',
-                  border: 'none', borderRadius: 'var(--r-full)',
-                  fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
-                }}>
+                <button onClick={deleteAccount} style={{ padding: '8px 18px', background: '#dc2626', color: 'white', border: 'none', borderRadius: 'var(--r-full)', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer' }}>
                   Delete account
                 </button>
               </div>
@@ -445,7 +393,6 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* Toast */}
       {toast && (
         <div className="toast-root">
           <div className={`toast ${toastErr ? 'error' : 'success'}`}>

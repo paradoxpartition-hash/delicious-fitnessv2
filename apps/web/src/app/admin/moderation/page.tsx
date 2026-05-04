@@ -31,7 +31,7 @@ export default function AdminModerationPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
       if (!data.user) { router.push('/auth/signin'); return; }
-      const { data: p } = await supabase.from('profiles').select('role').eq('id', data.user.id).single();
+      const { data: p } = await supabase.from('profiles').select('role').eq('id', data.user.id).maybeSingle();
       if (!['ADMIN','MODERATOR'].includes(p?.role ?? '')) { router.push('/'); return; }
       fetchItems();
     });

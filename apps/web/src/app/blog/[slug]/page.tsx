@@ -40,7 +40,7 @@ export default function BlogPostPage() {
       .select('id, title, slug, excerpt, content, cover_url, category, read_time, published_at, profiles(username, avatar_url)')
       .eq('slug', slug)
       .eq('status', 'published')
-      .single()
+      .maybeSingle()
       .then(({ data, error }) => {
         if (error || !data) { router.push('/blog'); return; }
         setPost(data as BlogPost);

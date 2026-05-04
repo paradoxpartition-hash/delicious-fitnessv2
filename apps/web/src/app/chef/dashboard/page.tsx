@@ -65,7 +65,7 @@ export default function ChefDashboardPage() {
         .from('chef_profiles')
         .select('id, stats')
         .eq('user_id', data.user.id)
-        .single();
+        .maybeSingle();
 
       if (!chef) {
         router.push('/pricing');

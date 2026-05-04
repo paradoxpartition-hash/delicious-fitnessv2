@@ -86,7 +86,7 @@ export default function ChefAffiliatesPage() {
         .from('affiliate_links')
         .insert({ recipe_id: recipeId, partner_name: partnerName.trim(), url: url.trim(), chef_id: user!.id, active: true })
         .select('id, recipe_id, partner_name, url, click_count, active, created_at')
-        .single();
+        .maybeSingle();
       if (error) throw error;
 
       const recipeTitle = recipes.find(r => r.id === recipeId)?.title ?? '—';

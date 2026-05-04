@@ -65,7 +65,7 @@ export default function MealPlanPage() {
           .eq('user_id', data.user.id)
           .order('created_at', { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
 
         if (existingPlan) {
           setPlan(existingPlan.plan_data);

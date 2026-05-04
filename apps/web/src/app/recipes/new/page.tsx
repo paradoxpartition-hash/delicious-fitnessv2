@@ -132,7 +132,7 @@ export default function NewRecipePage() {
           author_id:     user.id,
         })
         .select('id')
-        .single();
+        .maybeSingle();
 
       if (insertErr) throw insertErr;
 

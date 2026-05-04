@@ -44,7 +44,7 @@ export default function RecipeHistoryPage() {
         .from('recipes')
         .select('id, title, created_at, fork_count, rating_avg, forked_from_id, status, profiles(username, avatar_url)')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (!rootData) { setLoading(false); return; }
 

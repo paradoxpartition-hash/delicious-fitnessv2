@@ -103,7 +103,7 @@ export default function AdminPage() {
           .from('profiles')
           .select('role')
           .eq('id', data.user.id)
-          .single()
+          .maybeSingle()
           .then(({ data: p }) => {
             setIsAdmin(p?.role === 'ADMIN' || p?.role === 'MODERATOR');
             setChecking(false);

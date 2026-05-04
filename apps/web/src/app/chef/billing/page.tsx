@@ -33,7 +33,7 @@ export default function ChefBillingPage() {
         .from('subscriptions')
         .select('status, plan, current_period_end, cancel_at_period_end')
         .eq('user_id', data.user.id)
-        .single();
+        .maybeSingle();
 
       setSub(subData as Subscription ?? null);
       setLoading(false);

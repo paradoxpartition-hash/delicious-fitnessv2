@@ -113,7 +113,7 @@ export default function CommunityPage() {
           profiles(id, username, avatar_url),
           recipe_id, recipes(id, title)
         `)
-        .single();
+        .maybeSingle();
       if (error) throw error;
       setPosts(prev => [data as Post, ...prev]);
       setPostText('');

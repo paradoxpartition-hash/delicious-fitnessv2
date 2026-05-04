@@ -89,7 +89,7 @@ export default function RecipeDetailPage() {
           profiles(id, username, avatar_url)
         `)
         .eq('id', id)
-        .single(),
+        .maybeSingle(),
 
       supabase
         .from('recipe_comments')
@@ -157,7 +157,7 @@ export default function RecipeDetailPage() {
         .from('recipe_comments')
         .insert({ recipe_id: id, content: commentText.trim() })
         .select('id, content, created_at, profiles(username, avatar_url)')
-        .single();
+        .maybeSingle();
       if (error) throw error;
       setComments(prev => [data as Comment, ...prev]);
       setCommentText('');

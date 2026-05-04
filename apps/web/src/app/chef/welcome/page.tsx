@@ -20,7 +20,7 @@ export default function ChefWelcomePage() {
           .from('profiles')
           .select('username')
           .eq('id', data.user.id)
-          .single();
+          .maybeSingle();
         if (profile) setUsername(profile.username);
       }
     });

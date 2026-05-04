@@ -57,7 +57,7 @@ export default function EditRecipePage() {
         .select('*')
         .eq('id', id)
         .eq('author_id', user.id)  // ownership check
-        .single();
+        .maybeSingle();
 
       if (err || !recipe) { router.push('/chef/dashboard'); return; }
 

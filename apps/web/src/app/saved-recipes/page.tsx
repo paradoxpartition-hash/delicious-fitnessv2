@@ -71,7 +71,7 @@ export default function SavedRecipesPage() {
         .from('meal_plans')
         .select('plan_data')
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
 
       // Build set of recipe IDs in current weekly plan
       const planRecipeIds = new Set<string>();

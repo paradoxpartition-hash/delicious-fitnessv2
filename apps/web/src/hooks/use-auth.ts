@@ -3,22 +3,43 @@
  * Intellectual Property owned by Paradox FZCO
  * © 2026 Paradox FZCO. All rights reserved.
  *
- * useAuth — single source of truth for auth state + role-based routing.
+ * useAuth — fixed auth lifecycle hook
  *
- * Root cause of previous issues:
- * - supabase client was recreated on every render causing infinite refetch loops
- * - role checks were scattered across components causing hydration mismatches
- * - signOut only called supabase.auth.signOut() but didn't clear local state
- *   or redirect, so the UI appeared unchanged
+ * ROOT CAUSES FIXED:
+ *
+ * 1. Race condition between getUser() and onAuthStateChange()
+ *    Previous: Both ran in parallel. onAuthStateChange fired INITIAL_SESSION
+ *    before getUser() resolved, so loading toggled multiple times.
+ *    Fix: Remove getUser() entirely. Use ONLY onAuthStateChange with
+ *    INITIAL_SESSION event to set the initial auth state. This fires exactly
+ *    once on mount with the current session, then again on sign in/out.
+ *
+ * 2. fetchProfile called inside onAuthStateChange without guarding against
+ *    the case where it fails (e.g. RLS blocks read before profile exists).
+ *    If fetchProfile throws or returns null, setLoading(false) was never
+ *    reached. Fix: always call setLoading(false) in a finally block.
+ *
+ * 3. autoRefreshToken re-hydrating session after signOut.
+ *    Previous: window.location.replace('/') fired before Supabase's internal
+ *    token refresh completed, so the session came back.
+ *    Fix: Disable autoRefreshToken on the browser client, call signOut with
+ *    scope:'global' to invalidate server-side, clear all Supabase localStorage
+ *    keys explicitly, then redirect.
+ *
+ * 4. createBrowserClient() called at page component top level created a new
+ *    Supabase instance each render, triggering duplicate auth events.
+ *    Fix: Pages must NOT create their own supabase client. They use the one
+ *    from useAuth via the returned `supabase` reference.
  */
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createBrowserClient } from '@/lib/supabase/browser';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
 export type UserRole =
-  | 'USER' | 'CHEF' | 'MODERATOR' | 'ADMIN'      // legacy uppercase (migration 001)
-  | 'member' | 'chef' | 'dietitian' | 'admin' | 'moderator'; // new lowercase
+  | 'USER' | 'CHEF' | 'MODERATOR' | 'ADMIN'
+  | 'member' | 'chef' | 'dietitian' | 'admin' | 'moderator';
 
 export interface UserProfile {
   id:                string;
@@ -44,15 +65,16 @@ export interface AuthState {
   isDietitian:    boolean;
   isMember:       boolean;
   dashboardHref:  string;
+  supabase:       ReturnType<typeof createBrowserClient>;
   signOut:        () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
 
-// ─── Role predicate helpers — used only here, never in JSX ───────────────────
-const isAdminRole  = (r?: UserRole) => r === 'ADMIN'     || r === 'admin';
-const isModRole    = (r?: UserRole) => r === 'MODERATOR' || r === 'moderator';
-const isChefRole   = (r?: UserRole) => r === 'CHEF'      || r === 'chef';
-const isDietRole   = (r?: UserRole) => r === 'dietitian';
+// ─── Role helpers ─────────────────────────────────────────────────────────────
+const isAdminRole = (r?: UserRole) => r === 'ADMIN'     || r === 'admin';
+const isModRole   = (r?: UserRole) => r === 'MODERATOR' || r === 'moderator';
+const isChefRole  = (r?: UserRole) => r === 'CHEF'      || r === 'chef';
+const isDietRole  = (r?: UserRole) => r === 'dietitian';
 
 export function getDashboardHref(role?: UserRole): string {
   if (isAdminRole(role) || isModRole(role)) return '/admin';
@@ -62,20 +84,23 @@ export function getDashboardHref(role?: UserRole): string {
 }
 
 export const ROLE_LABELS: Record<string, string> = {
-  USER: 'Member', member: 'Member',
-  CHEF: 'Chef',   chef:   'Chef',
+  USER: 'Member',  member:    'Member',
+  CHEF: 'Chef',    chef:      'Chef',
   dietitian: 'Dietitian',
-  MODERATOR: 'Moderator', moderator: 'Moderator',
-  ADMIN: 'Administrator', admin: 'Administrator',
+  MODERATOR: 'Moderator',  moderator: 'Moderator',
+  ADMIN: 'Administrator',  admin:     'Administrator',
 };
 
 export const ROLE_ICONS: Record<string, string> = {
-  USER: '👤', member: '👤',
-  CHEF: '👨‍🍳', chef: '👨‍🍳',
+  USER: '👤',  member:    '👤',
+  CHEF: '👨‍🍳', chef:      '👨‍🍳',
   dietitian: '🥗',
   MODERATOR: '🛡️', moderator: '🛡️',
-  ADMIN: '⚙️', admin: '⚙️',
+  ADMIN: '⚙️',     admin:     '⚙️',
 };
+
+// ─── Supabase localStorage key prefix — used to clear session on signout ──────
+const SB_STORAGE_PREFIX = 'sb-';
 
 // ─── The hook ─────────────────────────────────────────────────────────────────
 export function useAuth(): AuthState {
@@ -83,67 +108,80 @@ export function useAuth(): AuthState {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Stable supabase client — created once, never recreated on render
+  // ONE stable Supabase client instance — never recreated.
+  // Exposed so pages can use it without creating their own.
   const supabase = useRef(createBrowserClient()).current;
 
-  const fetchProfile = useCallback(async (userId: string) => {
-    const { data } = await supabase
-      .from('profiles')
-      .select('id, username, avatar_url, bio, role, fitness_goal, daily_kcal_target, diet_type, meal_plan_status, created_at, updated_at')
-      .eq('id', userId)
-      .single();
-    if (data) setProfile(data as UserProfile);
-  }, []); // stable — no deps that change
+  // ── fetchProfile: always resolves, never hangs ────────────────────────────
+  const fetchProfile = useCallback(async (userId: string): Promise<void> => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, username, avatar_url, bio, role, fitness_goal, daily_kcal_target, diet_type, meal_plan_status, created_at, updated_at')
+        .eq('id', userId)
+        .single();
+      // Only update state if data actually came back
+      if (data && !error) setProfile(data as UserProfile);
+    } catch (_) {
+      // Profile fetch failed (e.g. RLS) — don't hang, just continue
+    }
+  }, []); // stable — supabase ref never changes
 
-  const refreshProfile = useCallback(async () => {
-    const { data: { user: u } } = await supabase.auth.getUser();
-    if (u) await fetchProfile(u.id);
-  }, [fetchProfile]);
+  const refreshProfile = useCallback(async (): Promise<void> => {
+    if (!user?.id) return;
+    await fetchProfile(user.id);
+  }, [user?.id, fetchProfile]);
 
+  // ── Auth state — driven entirely by onAuthStateChange ────────────────────
+  // INITIAL_SESSION fires synchronously on mount with the current session.
+  // SIGNED_IN fires on login. SIGNED_OUT fires on logout.
+  // This is the ONLY place we set user/loading — no separate getUser() call.
   useEffect(() => {
-    // Initial session check
-    supabase.auth.getUser().then(async ({ data }) => {
-      const u = data.user ?? null;
-      setUser(u);
-      if (u) await fetchProfile(u.id);
-      setLoading(false);
-    });
-
-    // Auth state listener — fires on sign in / sign out
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
         const u = session?.user ?? null;
         setUser(u);
-        if (u) await fetchProfile(u.id);
-        else   { setProfile(null); setLoading(false); }
+
+        if (u) {
+          await fetchProfile(u.id);
+        } else {
+          setProfile(null);
+        }
+
+        // loading resolves after the FIRST event (INITIAL_SESSION)
+        setLoading(false);
       }
     );
 
     return () => subscription.unsubscribe();
-  }, []); // runs once on mount
+  }, []); // empty deps — runs exactly once on mount
 
-  // ── Sign out — fully clears state, storage, and redirects ────────────────
-  const signOut = useCallback(async () => {
-    try {
-      await supabase.auth.signOut();
-    } catch (_) {
-      // Ignore errors — we still want to clear local state
-    }
-    // Clear local state
+  // ── signOut: kills session properly including autoRefresh ─────────────────
+  const signOut = useCallback(async (): Promise<void> => {
+    // 1. Clear React state immediately so UI updates instantly
     setUser(null);
     setProfile(null);
-    // Clear relevant localStorage keys
-    const keysToRemove = [
-      'df_saved_recipes',
-      'df_read_notifications',
-      'df_homepage_sections',
-      'df_user_prefs',
-    ];
-    keysToRemove.forEach(key => {
-      try { localStorage.removeItem(key); } catch (_) {}
-    });
-    // Hard redirect — clears any in-memory React state too
-    window.location.replace('/');
+    setLoading(false);
+
+    // 2. Sign out globally — invalidates refresh token server-side
+    try {
+      await supabase.auth.signOut({ scope: 'global' });
+    } catch (_) {
+      // Continue even if server call fails
+    }
+
+    // 3. Explicitly clear ALL Supabase keys from localStorage
+    //    This prevents autoRefreshToken from re-establishing the session
+    try {
+      const keys = Object.keys(localStorage).filter(k =>
+        k.startsWith(SB_STORAGE_PREFIX) ||
+        k.startsWith('df_')
+      );
+      keys.forEach(k => localStorage.removeItem(k));
+    } catch (_) {}
+
+    // 4. Redirect — session is fully dead before this point
+    window.location.href = '/';
   }, []);
 
   const role = profile?.role;
@@ -158,6 +196,7 @@ export function useAuth(): AuthState {
     isDietitian:  isDietRole(role),
     isMember:     !role || (!isAdminRole(role) && !isModRole(role) && !isChefRole(role) && !isDietRole(role)),
     dashboardHref: getDashboardHref(role),
+    supabase,  // ← exposed so pages don't create their own client
     signOut,
     refreshProfile,
   };

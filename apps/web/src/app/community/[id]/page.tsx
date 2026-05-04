@@ -54,7 +54,7 @@ export default function PostDetailPage() {
         .from('community_posts')
         .select('id, content, image_url, created_at, like_count, liked, profiles(id, username, avatar_url), recipe_id, recipes(id, title)')
         .eq('id', postId)
-        .single(),
+        .maybeSingle(),
 
       supabase
         .from('post_comments')
@@ -87,7 +87,7 @@ export default function PostDetailPage() {
       .from('post_comments')
       .insert({ post_id: postId, content: commentText.trim() })
       .select('id, content, created_at, profiles(username, avatar_url)')
-      .single();
+      .maybeSingle();
 
     if (!error && data) {
       setComments(prev => [...prev, data as PostComment]);
