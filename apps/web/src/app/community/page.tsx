@@ -7,121 +7,106 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { createBrowserClient } from '@/lib/supabase/browser';
-import { detectLanguage, getTranslations, type LangCode } from '@/lib/i18n';
 
 interface Post {
-  id:          string;
-  content:     string;
-  image_url:   string | null;
-  created_at:  string;
-  like_count:  number;
-  liked:       boolean;
-  profiles:    { id: string; username: string; avatar_url: string | null } | null;
-  recipe_id:   string | null;
-  recipes:     { id: string; title: string } | null;
+  id:         string;
+  content:    string;
+  image_url:  string | null;
+  like_count: number;
+  created_at: string;
+  profiles:   { id: string; username: string; avatar_url: string | null } | null;
+  recipes:    { id: string; title: string } | null;
 }
 
-const TABS = ['feed', 'following', 'popular'] as const;
-type Tab = typeof TABS[number];
+type Tab = 'feed' | 'popular';
 
 export default function CommunityPage() {
-  const [lang, setLang]           = useState<LangCode>('en');
-  const [tab, setTab]             = useState<Tab>('feed');
-  const [posts, setPosts]         = useState<Post[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [postText, setPostText]   = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [currentUser, setCurrentUser] = useState<any>(null);
   const supabase = createBrowserClient();
-  const router   = useRouter();
 
-  // Language
-  useEffect(() => { setLang(detectLanguage()); }, []);
+  // loading starts FALSE — only true during actual fetch
+  const [posts,    setPosts]    = useState<Post[]>([]);
+  const [loading,  setLoading]  = useState(false);
+  const [tab,      setTab]      = useState<Tab>('feed');
+  const [newPost,  setNewPost]  = useState('');
+  const [posting,  setPosting]  = useState(false);
+  const [user,     setUser]     = useState<any>(null);
+
+  // Get current user (non-blocking — page works for anon too)
   useEffect(() => {
-    const h = (e: Event) => setLang((e as CustomEvent).detail);
-    window.addEventListener('df:langchange', h);
-    return () => window.removeEventListener('df:langchange', h);
+    supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
   }, []);
 
-  // Auth
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setCurrentUser(data.user));
-  }, []);
-
-  // Fetch posts (PRESERVED logic from original)
   const fetchPosts = useCallback(async () => {
     setLoading(true);
     try {
       let query = supabase
         .from('community_posts')
-        .select(`
-          id, content, image_url, created_at, like_count, liked,
-          profiles(id, username, avatar_url),
-          recipe_id,
-          recipes(id, title)
-        `)
-        .order('created_at', { ascending: false })
-        .limit(30);
+        .select('id, content, image_url, like_count, created_at, profiles(id, username, avatar_url), recipes(id, title)')
+        .limit(20);
 
       if (tab === 'popular') {
-        query = supabase
-          .from('community_posts')
-          .select(`
-            id, content, image_url, created_at, like_count, liked,
-            profiles(id, username, avatar_url),
-            recipe_id, recipes(id, title)
-          `)
-          .order('like_count', { ascending: false })
-          .limit(30);
+        query = query.order('like_count', { ascending: false });
+      } else {
+        query = query.order('created_at', { ascending: false });
       }
 
-      const { data } = await query;
-      setPosts((data ?? []) as Post[]);
-    } catch (_) {}
-    setLoading(false);
+      const { data, error } = await query;
+
+      if (error) {
+        console.error('[community] fetch error:', error.message);
+        setPosts([]);
+      } else {
+        setPosts((data ?? []) as Post[]);
+      }
+    } catch (e) {
+      console.error('[community] unexpected error:', e);
+      setPosts([]);
+    } finally {
+      // ALWAYS resolve loading — no permanent spinner
+      setLoading(false);
+    }
   }, [tab]);
 
-  useEffect(() => { fetchPosts(); }, [fetchPosts]);
+  useEffect(() => {
+    fetchPosts();
+  }, [fetchPosts]);
 
-  // Like / unlike (PRESERVED)
-  const toggleLike = async (postId: string, liked: boolean) => {
-    if (!currentUser) { router.push('/auth/signin'); return; }
-    setPosts(prev => prev.map(p =>
-      p.id === postId
-        ? { ...p, liked: !liked, like_count: liked ? p.like_count - 1 : p.like_count + 1 }
-        : p
-    ));
-    try {
-      await supabase.rpc(liked ? 'unlike_post' : 'like_post', { p_post_id: postId });
-    } catch (_) {}
-  };
-
-  // Create post (PRESERVED)
-  const handlePost = async (e: React.FormEvent) => {
+  const submitPost = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentUser) { router.push('/auth/signin'); return; }
-    if (!postText.trim()) return;
-    setSubmitting(true);
-    try {
-      const { data, error } = await supabase
-        .from('community_posts')
-        .insert({ content: postText.trim() })
-        .select(`
-          id, content, image_url, created_at, like_count, liked,
-          profiles(id, username, avatar_url),
-          recipe_id, recipes(id, title)
-        `)
-        .maybeSingle();
-      if (error) throw error;
+    if (!user || !newPost.trim()) return;
+    setPosting(true);
+    const { data, error } = await supabase
+      .from('community_posts')
+      .insert({ content: newPost.trim() })
+      .select('id, content, image_url, like_count, created_at, profiles(id, username, avatar_url), recipes(id, title)')
+      .single();
+    if (!error && data) {
       setPosts(prev => [data as Post, ...prev]);
-      setPostText('');
-    } catch (_) {}
-    setSubmitting(false);
+      setNewPost('');
+    }
+    setPosting(false);
   };
 
-  const t = getTranslations(lang);
+  const toggleLike = async (post: Post) => {
+    if (!user) return;
+    const liked = false; // simplified — no per-user like state here
+    setPosts(prev => prev.map(p =>
+      p.id === post.id ? { ...p, like_count: p.like_count + 1 } : p
+    ));
+    await supabase.rpc('like_post', { p_post_id: post.id });
+  };
+
+  const timeAgo = (d: string) => {
+    const diff = Date.now() - new Date(d).getTime();
+    const mins = Math.floor(diff / 60000);
+    const hrs  = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    if (mins < 1)   return 'just now';
+    if (mins < 60)  return `${mins}m ago`;
+    if (hrs  < 24)  return `${hrs}h ago`;
+    return `${days}d ago`;
+  };
 
   return (
     <>
@@ -135,23 +120,20 @@ export default function CommunityPage() {
       <section className="section-sm">
         <div className="container" style={{ maxWidth: 800, marginInline: 'auto' }}>
 
-          {/* Compose box */}
-          <div style={{
-            background: 'white', border: '1px solid var(--border)',
-            borderRadius: 'var(--r-lg)', padding: '20px', marginBottom: 24,
-          }}>
-            <form onSubmit={handlePost}>
+          {/* Post composer */}
+          <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', padding: 20, marginBottom: 24 }}>
+            <form onSubmit={submitPost}>
               <div className="flex gap-12 items-start">
                 <div className="avatar avatar-md flex-shrink-0">
-                  {currentUser ? currentUser.email?.[0].toUpperCase() : '👤'}
+                  {user ? user.email?.[0]?.toUpperCase() : '👤'}
                 </div>
                 <div style={{ flex: 1 }}>
                   <textarea
                     className="input"
-                    placeholder={currentUser ? "What are you cooking today? 🍽️" : "Sign in to post…"}
-                    value={postText}
-                    onChange={e => setPostText(e.target.value)}
-                    disabled={!currentUser}
+                    placeholder={user ? "Share a meal, tip, or win with the community…" : "Sign in to post…"}
+                    value={newPost}
+                    onChange={e => setNewPost(e.target.value)}
+                    disabled={!user}
                     rows={3}
                     style={{ resize: 'none' }}
                   />
@@ -162,10 +144,10 @@ export default function CommunityPage() {
                     </div>
                     <button
                       type="submit"
-                      className={`btn btn-primary btn-sm${submitting ? ' btn-loading' : ''}`}
-                      disabled={submitting || !postText.trim() || !currentUser}
+                      className={`btn btn-primary btn-sm${posting ? ' btn-loading' : ''}`}
+                      disabled={!user || !newPost.trim() || posting}
                     >
-                      {submitting ? '' : 'Post'}
+                      {posting ? '' : 'Post'}
                     </button>
                   </div>
                 </div>
@@ -175,36 +157,27 @@ export default function CommunityPage() {
 
           {/* Tabs */}
           <div className="flex gap-4 mb-24" style={{ borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
-            {TABS.map(t => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                style={{
-                  padding: '10px 18px',
-                  fontWeight: 600, fontSize: '0.88rem',
-                  color: tab === t ? 'var(--primary)' : 'var(--text-muted)',
-                  borderBottom: tab === t ? '2px solid var(--primary)' : '2px solid transparent',
-                  marginBottom: -1,
-                  background: 'none', border: 'none',
-                  borderBottomStyle: 'solid',
-                  cursor: 'pointer',
-                  transition: 'color var(--duration) var(--ease)',
-                  textTransform: 'capitalize',
-                }}
-              >
-                {t === 'feed' ? '🏠 Feed' : t === 'following' ? '👥 Following' : '🔥 Popular'}
+            {([
+              { key: 'feed',    label: '🏠 Feed' },
+              { key: 'popular', label: '🔥 Popular' },
+            ] as const).map(t => (
+              <button key={t.key} onClick={() => setTab(t.key)} style={{
+                padding: '10px 18px', fontWeight: 600, fontSize: '0.88rem',
+                color: tab === t.key ? 'var(--primary)' : 'var(--text-muted)',
+                borderBottom: `2px solid ${tab === t.key ? 'var(--primary)' : 'transparent'}`,
+                marginBottom: -1, background: 'none', border: 'none',
+                borderBottomStyle: 'solid', cursor: 'pointer',
+              }}>
+                {t.label}
               </button>
             ))}
           </div>
 
-          {/* Posts */}
-          {loading ? (
+          {/* Loading skeletons */}
+          {loading && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {[...Array(5)].map((_, i) => (
-                <div key={i} style={{
-                  background: 'white', border: '1px solid var(--border)',
-                  borderRadius: 'var(--r-lg)', padding: 20,
-                }}>
+              {[...Array(3)].map((_, i) => (
+                <div key={i} style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', padding: 20 }}>
                   <div className="flex gap-12 mb-12">
                     <div className="skeleton" style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0 }} />
                     <div style={{ flex: 1 }}>
@@ -218,64 +191,78 @@ export default function CommunityPage() {
                 </div>
               ))}
             </div>
-          ) : posts.length === 0 ? (
+          )}
+
+          {/* Empty state — shown when NOT loading AND no posts */}
+          {!loading && posts.length === 0 && (
             <div className="empty-state">
               <div className="empty-icon">💬</div>
               <h3 className="empty-title">No posts yet</h3>
-              <p className="empty-desc">Be the first to share something!</p>
+              <p className="empty-desc">Be the first to share something with the community!</p>
+              {!user && (
+                <Link href="/auth/signup" className="btn btn-primary">
+                  Join the community
+                </Link>
+              )}
             </div>
-          ) : (
+          )}
+
+          {/* Posts feed */}
+          {!loading && posts.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               {posts.map(post => (
-                <div key={post.id} className="post-card reveal">
-                  <div className="post-head">
-                    <div className="avatar avatar-md">
+                <div key={post.id} style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', padding: 20 }}>
+                  {/* Post header */}
+                  <div className="flex gap-12 mb-12">
+                    <div className="avatar avatar-md flex-shrink-0">
                       {post.profiles?.avatar_url
                         ? <img src={post.profiles.avatar_url} alt="" />
-                        : (post.profiles?.username?.[0] ?? '?').toUpperCase()
+                        : (post.profiles?.username?.[0]?.toUpperCase() ?? '?')
                       }
                     </div>
-                    <div style={{ flex: 1 }}>
-                      <div className="post-author-name">{post.profiles?.username ?? 'Anonymous'}</div>
-                      <div className="post-author-meta">
-                        {new Date(post.created_at).toLocaleDateString('en', {
-                          day: 'numeric', month: 'short', year: 'numeric',
-                        })}
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>
+                        {post.profiles?.username ?? 'Anonymous'}
+                      </div>
+                      <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                        {timeAgo(post.created_at)}
                       </div>
                     </div>
-                    {post.profiles?.id === currentUser?.id && (
-                      <button className="btn btn-ghost btn-sm" style={{ fontSize: '1rem' }}>⋯</button>
-                    )}
                   </div>
 
-                  <p className="post-content">{post.content}</p>
+                  {/* Content */}
+                  <p style={{ fontSize: '0.92rem', lineHeight: 1.65, marginBottom: 12 }}>
+                    {post.content}
+                  </p>
 
+                  {/* Image */}
                   {post.image_url && (
-                    <div className="post-image" style={{ marginBottom: 12 }}>
-                      <img src={post.image_url} alt="" style={{ width: '100%', borderRadius: 'var(--r)', maxHeight: 320, objectFit: 'cover' }} />
-                    </div>
+                    <img src={post.image_url} alt="" style={{ width: '100%', borderRadius: 'var(--r)', marginBottom: 12, maxHeight: 320, objectFit: 'cover' }} />
                   )}
 
+                  {/* Tagged recipe */}
                   {post.recipes && (
                     <Link href={`/recipes/${post.recipes.id}`} style={{
-                      display: 'flex', alignItems: 'center', gap: 10,
+                      display: 'flex', alignItems: 'center', gap: 8,
                       background: 'var(--primary-50)', borderRadius: 'var(--r)',
                       padding: '8px 12px', marginBottom: 12,
-                      fontSize: '0.83rem', fontWeight: 500, color: 'var(--primary-dark)',
+                      fontSize: '0.84rem', fontWeight: 500, color: 'var(--primary-dark)',
                     }}>
                       🍽️ {post.recipes.title}
                     </Link>
                   )}
 
-                  <div className="post-actions">
+                  {/* Actions */}
+                  <div style={{ display: 'flex', gap: 16, paddingTop: 12, borderTop: '1px solid var(--border-light)' }}>
                     <button
-                      className={`post-action${post.liked ? ' liked' : ''}`}
-                      onClick={() => toggleLike(post.id, post.liked)}
+                      onClick={() => toggleLike(post)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.84rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: user ? 'pointer' : 'default' }}
                     >
-                      {post.liked ? '❤️' : '🤍'} {post.like_count > 0 ? post.like_count : ''} Like
+                      🤍 {post.like_count > 0 ? post.like_count : ''} Like
                     </button>
-                    <button className="post-action">💬 Comment</button>
-                    <button className="post-action">↗ Share</button>
+                    <Link href={`/community/${post.id}`} style={{ fontSize: '0.84rem', color: 'var(--text-muted)' }}>
+                      💬 Comment
+                    </Link>
                   </div>
                 </div>
               ))}
