@@ -3,7 +3,7 @@
  * Intellectual Property owned by Paradox FZCO
  * © 2026 Paradox FZCO. All rights reserved.
  */
-'use client';
+'use client'; // v1778064010
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
